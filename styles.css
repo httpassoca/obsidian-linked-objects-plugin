@@ -1,0 +1,536 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Object Links — Styles
+   Matches Obsidian's native graph view aesthetic
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Graph container ──────────────────────────────────────────────── */
+
+.ol-graph-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--background-primary);
+}
+
+.ol-graph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Edges ────────────────────────────────────────────────────────── */
+
+.ol-edge {
+  stroke-width: 1;
+  stroke-opacity: 0.35;
+  transition: stroke-opacity 0.15s ease, stroke 0.15s ease;
+}
+
+.ol-edge-wiki {
+  stroke: var(--graph-line, var(--background-modifier-border));
+}
+
+.ol-edge-obj {
+  stroke: var(--graph-node, var(--interactive-accent));
+  stroke-opacity: 0.25;
+}
+
+.ol-edge.ol-dimmed {
+  stroke-opacity: 0.03;
+}
+
+.ol-edge.ol-edge-highlighted {
+  stroke: var(--graph-node, var(--interactive-accent));
+  stroke-opacity: 0.75;
+  stroke-width: 1.5;
+}
+
+/* ── Nodes ────────────────────────────────────────────────────────── */
+
+.ol-node {
+  cursor: pointer;
+  transition: fill-opacity 0.15s ease;
+  stroke: none;
+}
+
+.ol-node-object {
+  fill: var(--graph-node, var(--interactive-accent));
+  fill-opacity: 0.9;
+}
+
+.ol-node-file {
+  fill: var(--text-muted, #999);
+  fill-opacity: 0.5;
+}
+
+.ol-node:hover {
+  fill-opacity: 1;
+}
+
+.ol-node.ol-dimmed {
+  fill-opacity: 0.05;
+}
+
+.ol-node.ol-highlighted {
+  fill-opacity: 1;
+  filter: drop-shadow(0 0 6px var(--graph-node-focused, var(--interactive-accent)));
+}
+
+.ol-node-object.ol-highlighted {
+  fill: var(--graph-node-focused, var(--interactive-accent));
+}
+
+.ol-node-file.ol-highlighted {
+  fill: var(--text-normal, #fff);
+  fill-opacity: 0.85;
+}
+
+/* ── Labels ───────────────────────────────────────────────────────── */
+
+.ol-label {
+  fill: var(--text-normal);
+  font-size: 11px;
+  font-family: var(--font-interface, var(--default-font));
+  text-anchor: middle;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  user-select: none;
+}
+
+.ol-label.ol-dimmed {
+  opacity: 0.03 !important;
+}
+
+.ol-label.ol-label-visible {
+  opacity: 1 !important;
+  font-weight: 500;
+}
+
+/* ── Tooltip ──────────────────────────────────────────────────────── */
+
+.ol-tooltip {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  font-size: 12px;
+  font-family: var(--font-interface, var(--default-font));
+  padding: 4px 10px;
+  border-radius: 4px;
+  z-index: 200;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Config Panel (top-left, like Obsidian's native graph controls)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-config-panel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 240px;
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 0;
+  z-index: 100;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  font-family: var(--font-interface, var(--default-font));
+  font-size: 12px;
+}
+
+.ol-config-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.ol-config-panel::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+}
+
+.ol-config-section {
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ol-config-section:last-child {
+  border-bottom: none;
+}
+
+.ol-config-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+.ol-config-section-header:hover {
+  color: var(--text-normal);
+}
+
+.ol-config-arrow {
+  font-size: 8px;
+  width: 10px;
+  text-align: center;
+}
+
+.ol-config-section-content {
+  padding: 4px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ol-config-row {
+  display: flex;
+  align-items: center;
+}
+
+.ol-config-input {
+  width: 100%;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-normal);
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+  font-family: var(--font-interface, var(--default-font));
+}
+.ol-config-input:focus {
+  border-color: var(--interactive-accent);
+}
+.ol-config-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* Toggle */
+.ol-config-toggle-row {
+  justify-content: space-between;
+}
+
+.ol-config-label {
+  color: var(--text-normal);
+  font-size: 12px;
+}
+
+.ol-config-toggle {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--background-modifier-border);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.ol-config-toggle.is-enabled {
+  background: var(--interactive-accent);
+}
+
+.ol-config-toggle-knob {
+  width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--text-normal);
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: left 0.15s ease;
+}
+
+.ol-config-toggle.is-enabled .ol-config-toggle-knob {
+  left: 16px;
+}
+
+/* Slider */
+.ol-config-slider-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.ol-config-slider {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  outline: none;
+}
+.ol-config-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Info Panel (right side, on node click)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-info-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 260px;
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 16px;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  font-family: var(--font-interface, var(--default-font));
+}
+
+.ol-info-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.ol-info-panel::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+}
+
+.ol-info-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 6px;
+}
+
+.ol-info-type {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-bottom: 8px;
+}
+
+.ol-info-type-object {
+  background: var(--interactive-accent);
+  color: var(--background-primary);
+}
+
+.ol-info-type-file {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.ol-info-file {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  word-break: break-all;
+}
+
+.ol-info-props {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ol-info-prop-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  line-height: 1.4;
+  gap: 8px;
+}
+
+.ol-info-prop-key {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ol-info-prop-val {
+  color: var(--text-normal);
+  text-align: right;
+}
+
+.ol-info-connections {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+
+/* Go to button */
+.ol-info-go-btn {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  background: var(--interactive-accent);
+  color: var(--background-primary);
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font-interface, var(--default-font));
+  transition: opacity 0.15s ease;
+}
+.ol-info-go-btn:hover {
+  opacity: 0.85;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Inline {{object}} links (rendered in reading view)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-inline-link {
+  color: var(--link-color, var(--text-accent));
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: var(--link-decoration-color, hsla(var(--interactive-accent-hsl), 0.3));
+  text-underline-offset: 2px;
+  transition: color 0.1s ease;
+}
+
+.ol-inline-link:hover {
+  color: var(--link-color-hover, var(--text-accent-hover));
+  text-decoration-color: var(--link-decoration-color-hover, var(--link-color-hover, var(--text-accent-hover)));
+}
+
+.ol-inline-link-unresolved {
+  color: var(--link-unresolved-color, var(--text-faint));
+  opacity: var(--link-unresolved-opacity, 0.7);
+  text-decoration-style: solid;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Object popover (hover on {{}} links)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-popover {
+  position: fixed;
+  z-index: 1000;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-family: var(--font-interface, var(--default-font));
+  max-width: 300px;
+  pointer-events: none;
+}
+
+.ol-popover-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 2px;
+}
+
+.ol-popover-file {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ol-popover-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ol-popover-key {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ol-popover-val {
+  color: var(--text-normal);
+  text-align: right;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Suggestion dropdown
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.ol-suggestion-title {
+  font-size: 13px;
+  color: var(--text-normal);
+  font-weight: 500;
+}
+
+.ol-suggestion-file {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Live-preview editor highlighting for {{object links}}
+   Matches the native [[wikilink]] appearance
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-cm-link {
+  color: var(--link-color, var(--text-accent));
+}
+
+.ol-cm-link .cm-underline,
+.ol-cm-link {
+  text-decoration: none;
+}
+
+.ol-cm-link-editing {
+  color: var(--link-color, var(--text-accent));
+}
+
+.ol-cm-bracket {
+  color: var(--link-color, var(--text-accent));
+  opacity: 0.5;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Empty state
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-family: var(--font-interface, var(--default-font));
+  text-align: center;
+  padding: 40px;
+  white-space: pre-line;
+  line-height: 1.6;
+}

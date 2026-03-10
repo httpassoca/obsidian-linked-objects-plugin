@@ -1,0 +1,9 @@
+{
+  "id": "object-links",
+  "name": "Object Links",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Define structured objects inside markdown files, link them with {{}} syntax, and visualize relationships in a graph view.",
+  "author": "opencode",
+  "isDesktopOnly": false
+}
