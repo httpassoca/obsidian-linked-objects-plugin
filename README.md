@@ -1,0 +1,1 @@
+# obsidian-linked-objects-plugin
