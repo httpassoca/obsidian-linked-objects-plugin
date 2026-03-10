@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Object Links — Styles
+   Object Links — Styles (WebGL renderer)
    Matches Obsidian's native graph view aesthetic
    ═══════════════════════════════════════════════════════════════════ */
 
@@ -11,100 +11,6 @@
   height: 100%;
   overflow: hidden;
   background-color: var(--background-primary);
-}
-
-.ol-graph-svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* ── Edges ────────────────────────────────────────────────────────── */
-
-.ol-edge {
-  stroke-width: 1;
-  stroke-opacity: 0.35;
-  transition: stroke-opacity 0.15s ease, stroke 0.15s ease;
-}
-
-.ol-edge-wiki {
-  stroke: var(--graph-line, var(--background-modifier-border));
-}
-
-.ol-edge-obj {
-  stroke: var(--graph-node, var(--interactive-accent));
-  stroke-opacity: 0.25;
-}
-
-.ol-edge.ol-dimmed {
-  stroke-opacity: 0.03;
-}
-
-.ol-edge.ol-edge-highlighted {
-  stroke: var(--graph-node, var(--interactive-accent));
-  stroke-opacity: 0.75;
-  stroke-width: 1.5;
-}
-
-/* ── Nodes ────────────────────────────────────────────────────────── */
-
-.ol-node {
-  cursor: pointer;
-  transition: fill-opacity 0.15s ease;
-  stroke: none;
-}
-
-.ol-node-object {
-  fill: var(--graph-node, var(--interactive-accent));
-  fill-opacity: 0.9;
-}
-
-.ol-node-file {
-  fill: var(--text-muted, #999);
-  fill-opacity: 0.5;
-}
-
-.ol-node:hover {
-  fill-opacity: 1;
-}
-
-.ol-node.ol-dimmed {
-  fill-opacity: 0.05;
-}
-
-.ol-node.ol-highlighted {
-  fill-opacity: 1;
-  filter: drop-shadow(0 0 6px var(--graph-node-focused, var(--interactive-accent)));
-}
-
-.ol-node-object.ol-highlighted {
-  fill: var(--graph-node-focused, var(--interactive-accent));
-}
-
-.ol-node-file.ol-highlighted {
-  fill: var(--text-normal, #fff);
-  fill-opacity: 0.85;
-}
-
-/* ── Labels ───────────────────────────────────────────────────────── */
-
-.ol-label {
-  fill: var(--text-normal);
-  font-size: 11px;
-  font-family: var(--font-interface, var(--default-font));
-  text-anchor: middle;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  user-select: none;
-}
-
-.ol-label.ol-dimmed {
-  opacity: 0.03 !important;
-}
-
-.ol-label.ol-label-visible {
-  opacity: 1 !important;
-  font-weight: 500;
 }
 
 /* ── Tooltip ──────────────────────────────────────────────────────── */

@@ -5,12 +5,6 @@ import type ObjectLinksPlugin from "./main";
  * Persistent plugin settings (saved to data.json).
  */
 export interface ObjectLinksSettings {
-  /**
-   * Frontmatter tag used to identify object files.
-   * Only markdown files whose frontmatter contains this tag will be parsed.
-   * Example: if set to "object-file", a file needs `tags: [object-file]` in
-   * its YAML frontmatter to be recognised by the plugin.
-   */
   objectFileTag: string;
 }
 
@@ -57,7 +51,6 @@ export class ObjectLinksSettingTab extends PluginSettingTab {
 
 /**
  * Graph configuration panel -- rendered inside the graph view.
- * Mirrors the style and layout of Obsidian's native graph controls.
  */
 
 export interface GraphConfig {
@@ -87,22 +80,23 @@ export const DEFAULT_CONFIG: GraphConfig = {
   pathFilter: "",
   sourceFilter: "",
   nodeSizeMultiplier: 1,
-  linkDistance: 150,
-  centerStrength: 0.04,
-  repelStrength: 400,
+  linkDistance: 100,
+  centerStrength: 0.03,
+  repelStrength: 300,
   labelOpacity: 0.65,
 };
 
 export type ConfigChangeCallback = (config: GraphConfig) => void;
 
 export class ConfigPanel {
-  private containerEl: HTMLElement;
+  private panelEl: HTMLElement;
   private config: GraphConfig;
   private onChange: ConfigChangeCallback;
   private collapsed: Record<string, boolean> = {
     filter: false,
     display: true,
   };
+  private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   constructor(
     parent: HTMLElement,
@@ -112,9 +106,9 @@ export class ConfigPanel {
     this.config = { ...config };
     this.onChange = onChange;
 
-    this.containerEl = document.createElement("div");
-    this.containerEl.className = "ol-config-panel";
-    parent.appendChild(this.containerEl);
+    this.panelEl = document.createElement("div");
+    this.panelEl.className = "ol-config-panel";
+    parent.appendChild(this.panelEl);
 
     this.render();
   }
@@ -124,82 +118,84 @@ export class ConfigPanel {
   }
 
   destroy(): void {
-    this.containerEl.remove();
+    for (const t of this.debounceTimers.values()) clearTimeout(t);
+    this.debounceTimers.clear();
+    this.panelEl.remove();
   }
 
   private render(): void {
-    this.containerEl.empty();
+    this.panelEl.empty();
 
     // ── Filter section ─────────────────────────────────
-    this.renderSection("filter", "Filters", () => {
+    this.renderSection("filter", "Filters", (contentEl) => {
       // Search
-      this.renderTextInput("Search", this.config.search, (v) => {
+      this.renderTextInput(contentEl, "Search", this.config.search, (v) => {
         this.config.search = v;
-        this.emit();
+        this.emitDebounced("search", 250);
       });
 
       // Path filter
-      this.renderTextInput("Path filter", this.config.pathFilter, (v) => {
+      this.renderTextInput(contentEl, "Path filter", this.config.pathFilter, (v) => {
         this.config.pathFilter = v;
-        this.emit();
+        this.emitDebounced("pathFilter", 250);
       }, "e.g. 00 Daily");
 
       // Source filter
-      this.renderTextInput("Source filter", this.config.sourceFilter, (v) => {
+      this.renderTextInput(contentEl, "Source filter", this.config.sourceFilter, (v) => {
         this.config.sourceFilter = v;
-        this.emit();
+        this.emitDebounced("sourceFilter", 250);
       }, "e.g. Films");
 
       // Toggles
-      this.renderToggle("Show files", this.config.showFiles, (v) => {
+      this.renderToggle(contentEl, "Show files", this.config.showFiles, (v) => {
         this.config.showFiles = v;
         this.emit();
       });
 
-      this.renderToggle("Show objects", this.config.showObjects, (v) => {
+      this.renderToggle(contentEl, "Show objects", this.config.showObjects, (v) => {
         this.config.showObjects = v;
         this.emit();
       });
 
-      this.renderToggle("Show orphans", this.config.showOrphans, (v) => {
+      this.renderToggle(contentEl, "Show orphans", this.config.showOrphans, (v) => {
         this.config.showOrphans = v;
         this.emit();
       });
 
-      this.renderToggle("Wiki links", this.config.showWikiEdges, (v) => {
+      this.renderToggle(contentEl, "Wiki links", this.config.showWikiEdges, (v) => {
         this.config.showWikiEdges = v;
         this.emit();
       });
 
-      this.renderToggle("Object links", this.config.showObjectEdges, (v) => {
+      this.renderToggle(contentEl, "Object links", this.config.showObjectEdges, (v) => {
         this.config.showObjectEdges = v;
         this.emit();
       });
     });
 
     // ── Display section ────────────────────────────────
-    this.renderSection("display", "Display", () => {
-      this.renderSlider("Node size", this.config.nodeSizeMultiplier, 0.2, 3, 0.1, (v) => {
+    this.renderSection("display", "Display", (contentEl) => {
+      this.renderSlider(contentEl, "Node size", this.config.nodeSizeMultiplier, 0.2, 3, 0.1, (v) => {
         this.config.nodeSizeMultiplier = v;
         this.emit();
       });
 
-      this.renderSlider("Link distance", this.config.linkDistance, 30, 500, 10, (v) => {
+      this.renderSlider(contentEl, "Link distance", this.config.linkDistance, 30, 500, 10, (v) => {
         this.config.linkDistance = v;
         this.emit();
       });
 
-      this.renderSlider("Center force", this.config.centerStrength, 0, 0.2, 0.005, (v) => {
+      this.renderSlider(contentEl, "Center force", this.config.centerStrength, 0, 0.2, 0.005, (v) => {
         this.config.centerStrength = v;
         this.emit();
       });
 
-      this.renderSlider("Repel force", this.config.repelStrength, 50, 1000, 25, (v) => {
+      this.renderSlider(contentEl, "Repel force", this.config.repelStrength, 50, 1000, 25, (v) => {
         this.config.repelStrength = v;
         this.emit();
       });
 
-      this.renderSlider("Label opacity", this.config.labelOpacity, 0, 1, 0.05, (v) => {
+      this.renderSlider(contentEl, "Label opacity", this.config.labelOpacity, 0, 1, 0.05, (v) => {
         this.config.labelOpacity = v;
         this.emit();
       });
@@ -209,7 +205,7 @@ export class ConfigPanel {
   private renderSection(
     key: string,
     title: string,
-    contentFn: () => void
+    contentFn: (contentEl: HTMLElement) => void
   ): void {
     const section = document.createElement("div");
     section.className = "ol-config-section";
@@ -236,23 +232,14 @@ export class ConfigPanel {
       const content = document.createElement("div");
       content.className = "ol-config-section-content";
       section.appendChild(content);
-
-      // Temporarily set containerEl to content for helpers
-      const savedContainer = this.containerEl;
-      this.containerEl = content;
-      contentFn();
-      this.containerEl = savedContainer;
+      contentFn(content);
     }
 
-    // Append to the real container (the panel)
-    // We need to use the actual panel element
-    const panel = document.querySelector(".ol-config-panel");
-    if (panel) {
-      panel.appendChild(section);
-    }
+    this.panelEl.appendChild(section);
   }
 
   private renderTextInput(
+    parent: HTMLElement,
     label: string,
     value: string,
     onChange: (v: string) => void,
@@ -269,10 +256,11 @@ export class ConfigPanel {
     input.addEventListener("input", () => onChange(input.value));
 
     row.appendChild(input);
-    this.containerEl.appendChild(row);
+    parent.appendChild(row);
   }
 
   private renderToggle(
+    parent: HTMLElement,
     label: string,
     value: boolean,
     onChange: (v: boolean) => void
@@ -287,20 +275,23 @@ export class ConfigPanel {
 
     const toggle = document.createElement("div");
     toggle.className = `ol-config-toggle ${value ? "is-enabled" : ""}`;
-    toggle.addEventListener("click", () => {
-      const newVal = !value;
-      onChange(newVal);
-    });
 
     const knob = document.createElement("div");
     knob.className = "ol-config-toggle-knob";
     toggle.appendChild(knob);
 
+    toggle.addEventListener("click", () => {
+      const newVal = !toggle.classList.contains("is-enabled");
+      toggle.classList.toggle("is-enabled", newVal);
+      onChange(newVal);
+    });
+
     row.appendChild(toggle);
-    this.containerEl.appendChild(row);
+    parent.appendChild(row);
   }
 
   private renderSlider(
+    parent: HTMLElement,
     label: string,
     value: number,
     min: number,
@@ -328,10 +319,19 @@ export class ConfigPanel {
     });
 
     row.appendChild(slider);
-    this.containerEl.appendChild(row);
+    parent.appendChild(row);
   }
 
   private emit(): void {
     this.onChange({ ...this.config });
+  }
+
+  private emitDebounced(key: string, ms: number): void {
+    const existing = this.debounceTimers.get(key);
+    if (existing) clearTimeout(existing);
+    this.debounceTimers.set(key, setTimeout(() => {
+      this.debounceTimers.delete(key);
+      this.emit();
+    }, ms));
   }
 }
