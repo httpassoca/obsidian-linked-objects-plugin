@@ -2,12 +2,18 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import { GraphData } from "./graph-data";
 import { ConfigPanel, GraphConfig, DEFAULT_CONFIG } from "./settings";
 import {
+  select,
   forceSimulation,
   forceLink,
   forceManyBody,
   forceCollide,
   forceX,
   forceY,
+  zoom,
+  zoomIdentity,
+  zoomTransform,
+  ZoomBehavior,
+  ZoomTransform,
   Simulation,
   SimulationNodeDatum,
   SimulationLinkDatum,
@@ -108,6 +114,11 @@ export class GraphView extends ItemView {
   private ctx: CanvasRenderingContext2D | null = null;
   private dpr = 1;
 
+  // d3-zoom
+  private zoomBehavior: ZoomBehavior<HTMLCanvasElement, unknown> | null = null;
+  private zoomTransform: ZoomTransform = zoomIdentity;
+  private isSyncingZoom = false;
+
   // Sim data
   private simNodes: SimNode[] = [];
   private simEdges: SimEdge[] = [];
@@ -125,11 +136,6 @@ export class GraphView extends ItemView {
   private selectedNode: SimNode | null = null;
   private dragNode: SimNode | null = null;
   private isDragging = false;
-  private isPanning = false;
-  private panStartX = 0;
-  private panStartY = 0;
-  private panStartCamX = 0;
-  private panStartCamY = 0;
   private lastClickTime = 0;
   private lastClickId = "";
 
@@ -213,7 +219,8 @@ export class GraphView extends ItemView {
     const c = this.canvasEl;
     if (!c) return;
     if (this._onWheel) c.removeEventListener("wheel", this._onWheel);
-    if (this._onMouseDown) c.removeEventListener("mousedown", this._onMouseDown);
+    // mousedown was registered with capture:true to intercept before d3-zoom
+    if (this._onMouseDown) c.removeEventListener("mousedown", this._onMouseDown, true);
     if (this._onMouseMove) c.removeEventListener("mousemove", this._onMouseMove);
     if (this._onMouseUp) c.removeEventListener("mouseup", this._onMouseUp);
     if (this._onDblClick) c.removeEventListener("dblclick", this._onDblClick);
@@ -942,50 +949,101 @@ export class GraphView extends ItemView {
     const canvas = this.canvasEl!;
     const container = this.contentEl;
 
-    // Wheel (smooth zoom)
-    this._onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-
-      const [wx, wy] = this.screenToWorldTarget(mx, my);
-
-      const factor = e.deltaY > 0 ? 0.92 : 1.0 / 0.92;
-      this.targetCamScale = Math.max(0.03, Math.min(12, this.targetCamScale * factor));
-
+    // d3-zoom (pan + wheel zoom) on canvas.
+    // We keep our own (camX/camY/camScale) camera, but drive targetCam* from zoom transform.
+    const updateTargetFromZoom = (t: any, sourceEvent?: Event | null) => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      this.targetCamX = wx - (mx - w / 2) / this.targetCamScale;
-      this.targetCamY = wy - (my - h / 2) / this.targetCamScale;
-    };
-    canvas.addEventListener("wheel", this._onWheel, { passive: false });
+      const k = Math.max(0.03, Math.min(12, t.k));
+      const x = t.x;
+      const y = t.y;
 
-    // Mouse down
+      // screen = world * k + (x, y)
+      // our camera: screen = (world - cam) * k + (w/2,h/2)
+      // => x = -camX*k + w/2  => camX = (w/2 - x)/k
+      const camX = (w / 2 - x) / k;
+      const camY = (h / 2 - y) / k;
+
+      this.zoomTransform = t;
+      this.targetCamScale = k;
+      this.targetCamX = camX;
+      this.targetCamY = camY;
+
+      // For drag-panning, avoid camera lag (keep it 1:1).
+      const se: any = sourceEvent as any;
+      const isWheel = se?.type === "wheel";
+      if (!isWheel) {
+        this.camScale = this.targetCamScale;
+        this.camX = this.targetCamX;
+        this.camY = this.targetCamY;
+      }
+
+      this.needsRedraw = true;
+    };
+
+    // Attach zoom behavior once.
+    if (!this.zoomBehavior) {
+      this.zoomBehavior = zoom<HTMLCanvasElement, unknown>()
+        .scaleExtent([0.03, 12])
+        .filter((event: any) => {
+          // Disable pan/zoom while dragging a node.
+          if (this.dragNode) return false;
+          // Only left mouse for drag-pan.
+          if (event?.type?.startsWith("mouse") && event.button !== 0) return false;
+          return true;
+        })
+        .on("zoom", (event: any) => {
+          if (this.isSyncingZoom) return;
+          updateTargetFromZoom(event.transform, event.sourceEvent);
+        });
+
+      const sel = select(canvas);
+      sel.call(this.zoomBehavior as any);
+      // We handle double click ourselves (open node), so disable d3's default zoom-on-dblclick.
+      sel.on("dblclick.zoom", null);
+
+      // Initialize transform to match our starting camera.
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      const k = this.targetCamScale;
+      const x = -this.targetCamX * k + w / 2;
+      const y = -this.targetCamY * k + h / 2;
+      this.isSyncingZoom = true;
+      try {
+        sel.call((this.zoomBehavior as any).transform, zoomIdentity.translate(x, y).scale(k));
+      } finally {
+        this.isSyncingZoom = false;
+      }
+    }
+
+    // Mouse down: only used for node drag + click selection tracking.
+    let downX = 0;
+    let downY = 0;
+    let downNode: SimNode | null = null;
+
     this._onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      const node = this.hitTestNode(mx, my);
+      downX = e.clientX;
+      downY = e.clientY;
+      downNode = this.hitTestNode(mx, my);
 
-      if (node) {
-        this.dragNode = node;
+      if (downNode) {
+        // Prevent d3-zoom from starting a pan when we intend to drag a node.
+        e.stopPropagation();
+
+        this.dragNode = downNode;
         this.isDragging = false;
-        node.fx = node.x ?? 0;
-        node.fy = node.y ?? 0;
+        downNode.fx = downNode.x ?? 0;
+        downNode.fy = downNode.y ?? 0;
         this.simulation?.alphaTarget(0.3).restart();
-      } else {
-        this.isPanning = true;
-        this.panStartX = e.clientX;
-        this.panStartY = e.clientY;
-        this.panStartCamX = this.targetCamX;
-        this.panStartCamY = this.targetCamY;
       }
     };
-    canvas.addEventListener("mousedown", this._onMouseDown);
+    canvas.addEventListener("mousedown", this._onMouseDown, { capture: true });
 
-    // Mouse move
+    // Mouse move: update node drag OR hover/tooltip.
     this._onMouseMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -996,17 +1054,6 @@ export class GraphView extends ItemView {
         const [wx, wy] = this.screenToWorld(mx, my);
         this.dragNode.fx = wx;
         this.dragNode.fy = wy;
-        this.needsRedraw = true;
-        return;
-      }
-
-      if (this.isPanning) {
-        const dx = (e.clientX - this.panStartX) / this.targetCamScale;
-        const dy = (e.clientY - this.panStartY) / this.targetCamScale;
-        this.targetCamX = this.panStartCamX - dx;
-        this.targetCamY = this.panStartCamY - dy;
-        this.camX = this.targetCamX;
-        this.camY = this.targetCamY;
         this.needsRedraw = true;
         return;
       }
@@ -1029,8 +1076,12 @@ export class GraphView extends ItemView {
     };
     canvas.addEventListener("mousemove", this._onMouseMove);
 
-    // Mouse up
+    // Mouse up: drop drag node, handle click/select/dblclick logic.
     this._onMouseUp = (e: MouseEvent) => {
+      const upDx = Math.abs(e.clientX - downX);
+      const upDy = Math.abs(e.clientY - downY);
+      const isClick = upDx < 3 && upDy < 3;
+
       if (this.dragNode) {
         const wasDragging = this.isDragging;
         this.dragNode.fx = null;
@@ -1063,19 +1114,16 @@ export class GraphView extends ItemView {
         return;
       }
 
-      if (this.isPanning) {
-        this.isPanning = false;
-        const dx = Math.abs(e.clientX - this.panStartX);
-        const dy = Math.abs(e.clientY - this.panStartY);
-        if (dx < 3 && dy < 3) {
-          this.selectedNode = null;
-          this.updateHighlightTargets();
-          this.removeInfoPanel(container);
-        }
+      // Click on empty space clears selection.
+      if (isClick && !downNode) {
+        this.selectedNode = null;
+        this.updateHighlightTargets();
+        this.removeInfoPanel(container);
       }
     };
     canvas.addEventListener("mouseup", this._onMouseUp);
 
+    // Prevent browser defaults
     this._onDblClick = (e: MouseEvent) => { e.preventDefault(); };
     canvas.addEventListener("dblclick", this._onDblClick);
   }
