@@ -102,6 +102,13 @@
   align-items: center;
 }
 
+/* Text inputs should have clear labels + spacing */
+.ol-config-text-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
 .ol-config-input {
   width: 100%;
   background: var(--background-primary);

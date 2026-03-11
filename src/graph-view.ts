@@ -203,9 +203,11 @@ class ForceSimulation {
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const minDist = a.radius + b.radius + 4;
+        // Padding here is important because labels are drawn just below nodes.
+        // A bit more spacing reduces the "pile-up" effect in dense graphs.
+        const minDist = a.radius + b.radius + 12;
         if (dist < minDist) {
-          const strength = (minDist - dist) / dist * 0.35 * alpha;
+          const strength = (minDist - dist) / dist * 0.7 * alpha;
           const ox = dx * strength;
           const oy = dy * strength;
           a.vx -= ox;
@@ -985,7 +987,18 @@ export class GraphView extends ItemView {
     // Track which node IDs are still present
     const activeIds = new Set<string>();
 
-    for (const n of this.simNodes) {
+    // Greedy label placement in screen-space to reduce overlapping labels.
+    // We prioritize "more visible" nodes first (higher alpha, higher degree).
+    const orderedNodes = [...this.simNodes].sort((a, b) => {
+      if (b.alpha !== a.alpha) return b.alpha - a.alpha;
+      return (b.connections || 0) - (a.connections || 0);
+    });
+
+    const placedRects: Array<{ x: number; y: number; w: number; h: number }> = [];
+    const intersects = (r1: any, r2: any) =>
+      r1.x < r2.x + r2.w && r1.x + r1.w > r2.x && r1.y < r2.y + r2.h && r1.y + r1.h > r2.y;
+
+    for (const n of orderedNodes) {
       activeIds.add(n.id);
 
       const sx = (n.x - this.camX) * this.camScale + halfW;
@@ -1031,14 +1044,38 @@ export class GraphView extends ItemView {
         this.labelTexts.set(n.id, text);
       }
 
-      // Update text properties
-      text.visible = true;
+      // Update text properties (must happen before measuring width/height)
       text.text = n.label;
       (text.style as TextStyle).fontSize = fontSize;
       (text.style as TextStyle).fill = this.colorText;
       text.x = sx;
       text.y = screenY;
       text.alpha = alpha;
+
+      // Simple overlap culling.
+      // NOTE: Pixi's Text width/height are in screen pixels, which is exactly what we want.
+      const pad = 3;
+      const rect = {
+        x: sx - text.width / 2 - pad,
+        y: screenY - pad,
+        w: text.width + pad * 2,
+        h: text.height + pad * 2,
+      };
+
+      let collides = false;
+      for (const r of placedRects) {
+        if (intersects(rect, r)) { collides = true; break; }
+      }
+
+      // Always show the focused node's label.
+      const isFocus = n === (this.hoveredNode || this.selectedNode);
+      if (!isFocus && collides) {
+        text.visible = false;
+        continue;
+      }
+
+      text.visible = true;
+      placedRects.push(rect);
     }
 
     // Remove labels for nodes that no longer exist

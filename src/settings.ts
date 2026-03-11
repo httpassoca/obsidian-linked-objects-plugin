@@ -246,12 +246,17 @@ export class ConfigPanel {
     placeholder?: string
   ): void {
     const row = document.createElement("div");
-    row.className = "ol-config-row";
+    row.className = "ol-config-row ol-config-text-row";
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "ol-config-label";
+    labelEl.textContent = label;
+    row.appendChild(labelEl);
 
     const input = document.createElement("input");
     input.type = "text";
     input.className = "ol-config-input";
-    input.placeholder = placeholder || label;
+    input.placeholder = placeholder || "";
     input.value = value;
     input.addEventListener("input", () => onChange(input.value));
 
