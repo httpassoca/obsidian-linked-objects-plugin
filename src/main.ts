@@ -1,5 +1,6 @@
 import {
   MarkdownPostProcessorContext,
+  MarkdownView,
   Notice,
   Plugin,
   TFile,
@@ -14,7 +15,7 @@ import {
 import { buildGraph, GraphData, VaultFile } from "./graph-data";
 import { GraphView, VIEW_TYPE } from "./graph-view";
 import { ObjectLinkSuggest } from "./suggest";
-import { objectLinkHighlighter } from "./editor-extension";
+import { objectLinkHighlighter, objectLinkWrapperKeymap } from "./editor-extension";
 import {
   ObjectLinksSettings,
   DEFAULT_SETTINGS,
@@ -49,8 +50,8 @@ export default class ObjectLinksPlugin extends Plugin {
     this.suggestProvider = new ObjectLinkSuggest(this.app);
     this.registerEditorSuggest(this.suggestProvider);
 
-    // ── Register CM6 editor extension for {{}} syntax highlighting ──
-    this.registerEditorExtension(objectLinkHighlighter);
+    // ── Register CM6 editor extensions: highlighting + selection wrapper ──
+    this.registerEditorExtension([objectLinkHighlighter, objectLinkWrapperKeymap]);
 
     // ── Markdown post-processor: render {{object}} as clickable links ──
     this.registerMarkdownPostProcessor(
@@ -75,6 +76,13 @@ export default class ObjectLinksPlugin extends Plugin {
       id: "refresh-ol-graph",
       name: "Refresh graph",
       callback: () => this.fullRefresh(),
+    });
+
+    this.addCommand({
+      id: "open-under-cursor",
+      name: "Open link under cursor",
+      callback: () => this.openUnderCursor(),
+      hotkeys: [{ modifiers: ["Mod"], key: "Enter" }],
     });
 
     // ── Initial scan on layout ready ──
@@ -553,4 +561,62 @@ export default class ObjectLinksPlugin extends Plugin {
     // Re-scan after settings change (tag may have changed)
     this.fullRefresh();
   }
+
+  // ── Editor helpers ───────────────────────────────────────────────
+
+  /**
+   * Command: open the file/object "under the cursor".
+   * - If cursor is inside a wikilink ([[...]]), opens that file.
+   * - If cursor is inside an object link ({{...}}), opens the object's source file.
+   */
+  async openUnderCursor(): Promise<void> {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const editor = view?.editor;
+    if (!editor) {
+      new Notice("Object Links: No active editor");
+      return;
+    }
+
+    const cursor = editor.getCursor();
+    const line = editor.getLine(cursor.line) as string;
+    const ch = cursor.ch as number;
+
+    const within = (open: string, close: string): string | null => {
+      const left = line.lastIndexOf(open, ch);
+      if (left === -1) return null;
+      const right = line.indexOf(close, left + open.length);
+      if (right === -1) return null;
+      if (ch < left + open.length || ch > right) return null;
+      return line.substring(left + open.length, right);
+    };
+
+    // 1) Wikilink: [[target|alias]]
+    const wik = within("[[", "]]");
+    if (wik) {
+      const target = wik.split("|")[0].trim();
+      const dest = this.app.metadataCache.getFirstLinkpathDest(target, view?.file?.path || "");
+      if (dest) {
+        await this.app.workspace.getLeaf("tab").openFile(dest);
+        return;
+      }
+      new Notice(`File not found: ${target}`);
+      return;
+    }
+
+    // 2) Object link: {{object|alias}}
+    const obj = within("{{", "}}");
+    if (obj) {
+      const target = obj.split("|")[0].trim();
+      const found = this.objectIndex.get(target.toLowerCase());
+      if (found) {
+        await this.goToObject(found.filePath, found.startLine);
+        return;
+      }
+      new Notice(`Object "${target}" not found`);
+      return;
+    }
+
+    new Notice("No link under cursor");
+  }
 }
+

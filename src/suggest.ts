@@ -21,6 +21,36 @@ export interface ObjectSuggestion {
 export class ObjectLinkSuggest extends EditorSuggest<ObjectSuggestion> {
   private objects: ObjectSuggestion[] = [];
 
+  constructor(app: any) {
+    super(app);
+
+    // Make suggestions accept with Tab (in addition to Enter).
+    // Obsidian's PopoverSuggest uses an internal "chooser"; we call it best-effort.
+    this.setInstructions([
+      { command: "↑↓", purpose: "to navigate" },
+      { command: "Enter", purpose: "to insert" },
+      { command: "Tab", purpose: "to insert" },
+      { command: "Esc", purpose: "to dismiss" },
+    ]);
+
+    this.scope.register([], "Tab", (evt) => {
+      const e = evt as KeyboardEvent;
+      e.preventDefault();
+      e.stopPropagation();
+      const chooser = (this as any).chooser;
+      if (chooser && typeof chooser.useSelectedItem === "function") {
+        chooser.useSelectedItem(e);
+        return true;
+      }
+      // Fallback: simulate Enter
+      if (chooser && typeof chooser.onEnter === "function") {
+        chooser.onEnter(e);
+        return true;
+      }
+      return true;
+    });
+  }
+
   setObjects(objects: ParsedObject[]): void {
     this.objects = objects.map((o) => ({
       displayKey: o.displayKey,

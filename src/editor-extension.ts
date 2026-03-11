@@ -12,8 +12,9 @@ import {
   EditorView,
   ViewPlugin,
   ViewUpdate,
+  keymap,
 } from "@codemirror/view";
-import { RangeSetBuilder } from "@codemirror/state";
+import { EditorSelection, RangeSetBuilder } from "@codemirror/state";
 
 /* ── Decoration specs ─────────────────────────────────────────────── */
 
@@ -55,11 +56,7 @@ export const objectLinkHighlighter = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate): void {
-      if (
-        update.docChanged ||
-        update.viewportChanged ||
-        update.selectionSet
-      ) {
+      if (update.docChanged || update.viewportChanged || update.selectionSet) {
         this.decorations = buildDecorations(update.view);
       }
     }
@@ -68,3 +65,36 @@ export const objectLinkHighlighter = ViewPlugin.fromClass(
     decorations: (v) => v.decorations,
   }
 );
+
+/**
+ * Keybinding: if you have a selection and press `{`, wrap it in `{{ ... }}`.
+ * If there's no selection, let CodeMirror insert `{` normally.
+ */
+export const objectLinkWrapperKeymap = keymap.of([
+  {
+    key: "{",
+    run: (view) => {
+      const sel = view.state.selection;
+      if (sel.ranges.every((r) => r.empty)) return false;
+
+      const changes: { from: number; to: number; insert: string }[] = [];
+      const newRanges: any[] = [];
+
+      for (const r of sel.ranges) {
+        const text = view.state.doc.sliceString(r.from, r.to);
+        const insert = `{{${text}}}`;
+        changes.push({ from: r.from, to: r.to, insert });
+        // Place cursor inside the braces, selecting the original text.
+        const start = r.from + 2;
+        const end = start + text.length;
+        newRanges.push(EditorSelection.range(start, end));
+      }
+
+      view.dispatch({
+        changes,
+        selection: EditorSelection.create(newRanges, sel.mainIndex),
+      });
+      return true;
+    },
+  },
+]);
