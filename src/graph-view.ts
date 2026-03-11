@@ -195,19 +195,26 @@ class ForceSimulation {
       n.vy -= cy * cs;
     }
 
-    // Collision force
+    // Collision force (soft) — prevents overlap during the sim
+    // NOTE: we also do a *hard* positional solve after integration.
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i];
         const b = nodes[j];
         let dx = b.x - a.x;
         let dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        // Padding here is important because labels are drawn just below nodes.
-        // A bit more spacing reduces the "pile-up" effect in dense graphs.
-        const minDist = a.radius + b.radius + 12;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        if (!dist || dist < 1e-6) {
+          // Nudge apart deterministically when perfectly stacked
+          dx = (Math.random() - 0.5) * 0.01;
+          dy = (Math.random() - 0.5) * 0.01;
+          dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        }
+
+        // Extra padding so nodes never touch.
+        const minDist = a.radius + b.radius + 14;
         if (dist < minDist) {
-          const strength = (minDist - dist) / dist * 0.7 * alpha;
+          const strength = (minDist - dist) / dist * 1.25 * alpha;
           const ox = dx * strength;
           const oy = dy * strength;
           a.vx -= ox;
@@ -236,6 +243,62 @@ class ForceSimulation {
         n.vy *= decay;
         n.y += n.vy;
       }
+    }
+
+    // Hard collision solve: after integrating velocities, force nodes apart so
+    // overlap becomes impossible (they will not even touch).
+    this.resolveCollisions(3);
+  }
+
+  private resolveCollisions(iterations: number) {
+    const nodes = this.nodes;
+    const pad = 14; // should match/beat the soft collision padding
+    for (let it = 0; it < iterations; it++) {
+      let moved = false;
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i];
+          const b = nodes[j];
+
+          // If either node is fixed (dragging), only move the other.
+          const aFixed = a.fx !== null || a.fy !== null;
+          const bFixed = b.fx !== null || b.fy !== null;
+
+          let dx = b.x - a.x;
+          let dy = b.y - a.y;
+          let dist = Math.sqrt(dx * dx + dy * dy);
+          if (!dist || dist < 1e-6) {
+            dx = (Math.random() - 0.5) * 0.01;
+            dy = (Math.random() - 0.5) * 0.01;
+            dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          }
+
+          const minDist = a.radius + b.radius + pad;
+          const overlap = minDist - dist;
+          if (overlap > 0) {
+            const nx = dx / dist;
+            const ny = dy / dist;
+
+            // Push apart symmetrically unless one is fixed.
+            const push = overlap * 0.5;
+            if (!aFixed) {
+              a.x -= nx * push;
+              a.y -= ny * push;
+            }
+            if (!bFixed) {
+              b.x += nx * push;
+              b.y += ny * push;
+            }
+
+            // Dampen velocity so they don't immediately re-penetrate.
+            if (!aFixed) { a.vx *= 0.6; a.vy *= 0.6; }
+            if (!bFixed) { b.vx *= 0.6; b.vy *= 0.6; }
+
+            moved = true;
+          }
+        }
+      }
+      if (!moved) break;
     }
   }
 }
