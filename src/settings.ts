@@ -62,6 +62,7 @@ export interface GraphConfig {
   showObjectEdges: boolean;
   pathFilter: string;
   sourceFilter: string;
+  connectOrphansToFolders: boolean;
   // Display
   nodeSizeMultiplier: number;
   nodeMaxScreenRadius: number;
@@ -83,6 +84,7 @@ export const DEFAULT_CONFIG: GraphConfig = {
   showObjectEdges: true,
   pathFilter: "",
   sourceFilter: "",
+  connectOrphansToFolders: false,
   // Display
   nodeSizeMultiplier: 1,
   nodeMaxScreenRadius: 16,
@@ -168,6 +170,11 @@ export class ConfigPanel {
 
       this.renderToggle(contentEl, "Show orphans", this.config.showOrphans, (v) => {
         this.config.showOrphans = v;
+        this.emit();
+      });
+
+      this.renderToggle(contentEl, "Connect orphans to folders", this.config.connectOrphansToFolders, (v) => {
+        this.config.connectOrphansToFolders = v;
         this.emit();
       });
 

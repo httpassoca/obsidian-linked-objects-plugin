@@ -37,6 +37,8 @@ type SimNode = SimulationNodeDatum & {
   startLine: number;
   connections: number;
   radius: number;
+  /** True when node had 0 connections in the *base* graph (excluding optional folder edges). */
+  isOrphan: boolean;
   /** Current visual alpha (interpolated for smooth transitions) */
   alpha: number;
   /** Target alpha based on highlight state */
@@ -162,6 +164,7 @@ export class GraphView extends ItemView {
   private _onMouseMove: ((e: MouseEvent) => void) | null = null;
   private _onMouseUp: ((e: MouseEvent) => void) | null = null;
   private _onDblClick: ((e: MouseEvent) => void) | null = null;
+  private _onContainerMouseDown: ((e: MouseEvent) => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -205,6 +208,10 @@ export class GraphView extends ItemView {
     if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
     if (this.configPanel) { this.configPanel.destroy(); this.configPanel = null; }
     this.removeCanvasListeners();
+    if (this._onContainerMouseDown) {
+      this.contentEl.removeEventListener("mousedown", this._onContainerMouseDown, true);
+      this._onContainerMouseDown = null;
+    }
 
     this.simNodes = [];
     this.simEdges = [];
@@ -531,6 +538,27 @@ export class GraphView extends ItemView {
 
     this.resizeCanvas();
     this.setupInputHandlers();
+
+    // Clicking outside the info panel should close it.
+    if (!this._onContainerMouseDown) {
+      this._onContainerMouseDown = (e: MouseEvent) => {
+        const panel = this.contentEl.querySelector(".ol-info-panel") as HTMLElement | null;
+        if (!panel) return;
+        const target = e.target as HTMLElement | null;
+        if (target && panel.contains(target)) return;
+
+        // If the click was on the canvas, the canvas handlers will decide
+        // whether to keep selection (node click) or clear (empty click).
+        if (target === this.canvasEl) return;
+
+        this.selectedNode = null;
+        this.updateHighlightTargets();
+        this.removeInfoPanel(this.contentEl);
+        this.needsRedraw = true;
+      };
+      this.contentEl.addEventListener("mousedown", this._onContainerMouseDown, true);
+    }
+
     this.startRenderLoop();
   }
 
@@ -581,13 +609,67 @@ export class GraphView extends ItemView {
       oldPositions.set(n.id, { x: n.x ?? 0, y: n.y ?? 0 });
     }
 
+    // Orphan detection BEFORE optional folder edges.
+    const baseOrphans = new Set<string>();
+    for (const n of filtered.nodes) {
+      if ((n.connections || 0) === 0) baseOrphans.add(n.id);
+    }
+
+    // Option: connect orphans to their folder (so they cluster by location).
+    // Implemented here (view-level) to avoid changing the base graph model.
+    const nodesPlus = [...filtered.nodes] as any[];
+    const edgesPlus = [...filtered.edges] as any[];
+
+    if (this.config.connectOrphansToFolders) {
+      const folderNodeId = (folder: string) => `folder::${folder}`;
+      const folderLabel = (folder: string) => {
+        const cleaned = folder.replace(/\/+$/, "");
+        if (!cleaned || cleaned === "/") return "/";
+        const parts = cleaned.split("/").filter(Boolean);
+        return parts[parts.length - 1] || cleaned;
+      };
+
+      const existing = new Set(nodesPlus.map((n) => n.id));
+      const edgeSet = new Set(edgesPlus.map((e) => [e.source, e.target].sort().join("--")));
+
+      for (const n of filtered.nodes) {
+        if (!baseOrphans.has(n.id)) continue;
+
+        const path = n.filePath || "";
+        const idx = path.lastIndexOf("/");
+        const folder = idx > 0 ? path.slice(0, idx) : "/";
+        const fid = folderNodeId(folder);
+
+        if (!existing.has(fid)) {
+          existing.add(fid);
+          nodesPlus.push({
+            id: fid,
+            label: folderLabel(folder),
+            type: "file",
+            filePath: folder + "/",
+            fileLabel: folderLabel(folder),
+            properties: {},
+            startLine: 0,
+            connections: 0,
+          });
+        }
+
+        const edgeId = [n.id, fid].sort().join("--");
+        if (!edgeSet.has(edgeId)) {
+          edgeSet.add(edgeId);
+          edgesPlus.push({ source: n.id, target: fid, edgeType: "wiki" });
+        }
+      }
+    }
+
     const nodeById = new Map<string, SimNode>();
 
-    this.simNodes = filtered.nodes.map((n) => {
+    this.simNodes = nodesPlus.map((n) => {
       const old = oldPositions.get(n.id);
       const baseAlpha = n.type === "object" ? 0.9 : 0.5;
       const node: SimNode = {
         ...(n as any),
+        isOrphan: baseOrphans.has(n.id),
         x: old ? old.x : (Math.random() - 0.5) * width * 0.4,
         y: old ? old.y : (Math.random() - 0.5) * height * 0.4,
         vx: 0,
@@ -602,7 +684,7 @@ export class GraphView extends ItemView {
       return node;
     });
 
-    this.simEdges = filtered.edges
+    this.simEdges = edgesPlus
       .map((e) => {
         const s = nodeById.get(e.source);
         const t = nodeById.get(e.target);
@@ -686,6 +768,7 @@ export class GraphView extends ItemView {
       old.showWikiEdges !== newConfig.showWikiEdges ||
       old.showObjectEdges !== newConfig.showObjectEdges ||
       old.showOrphans !== newConfig.showOrphans ||
+      old.connectOrphansToFolders !== newConfig.connectOrphansToFolders ||
       old.search !== newConfig.search ||
       old.pathFilter !== newConfig.pathFilter ||
       old.sourceFilter !== newConfig.sourceFilter;
@@ -814,8 +897,8 @@ export class GraphView extends ItemView {
       const nxw = n.x ?? 0;
       const nyw = n.y ?? 0;
 
-      // All nodes use the theme accent color, except orphans which are grey.
-      const isOrphan = (n.connections || 0) === 0;
+      // All nodes use the theme accent color, except *base graph* orphans which are grey.
+      const isOrphan = !!n.isOrphan;
 
       let col: [number, number, number];
       if (focus && n === focus) {
@@ -1038,7 +1121,8 @@ export class GraphView extends ItemView {
         this.isDragging = false;
         downNode.fx = downNode.x ?? 0;
         downNode.fy = downNode.y ?? 0;
-        this.simulation?.alphaTarget(0.3).restart();
+        // Keep drag smooth (less aggressive reheating)
+        this.simulation?.alphaTarget(0.15).restart();
       }
     };
     canvas.addEventListener("mousedown", this._onMouseDown, { capture: true });
@@ -1052,8 +1136,10 @@ export class GraphView extends ItemView {
       if (this.dragNode) {
         this.isDragging = true;
         const [wx, wy] = this.screenToWorld(mx, my);
-        this.dragNode.fx = wx;
-        this.dragNode.fy = wy;
+        // Smooth drag: lerp towards the cursor instead of snapping.
+        const t = 0.35;
+        this.dragNode.fx = lerp(this.dragNode.fx ?? wx, wx, t);
+        this.dragNode.fy = lerp(this.dragNode.fy ?? wy, wy, t);
         this.needsRedraw = true;
         return;
       }
