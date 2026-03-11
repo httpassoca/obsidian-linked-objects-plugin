@@ -16,10 +16,14 @@ export interface ObjectSuggestion {
   fileLabel: string;
   filePath: string;
   properties: Record<string, string>;
+  /** True if this is a "Create new..." action item */
+  isCreateAction?: boolean;
 }
 
 export class ObjectLinkSuggest extends EditorSuggest<ObjectSuggestion> {
   private objects: ObjectSuggestion[] = [];
+  /** Callback invoked when user selects "Create new..." */
+  onCreateNew: ((query: string) => void) | null = null;
 
   constructor(app: any) {
     super(app);
@@ -87,20 +91,46 @@ export class ObjectLinkSuggest extends EditorSuggest<ObjectSuggestion> {
   }
 
   getSuggestions(context: EditorSuggestContext): ObjectSuggestion[] {
-    const query = context.query.toLowerCase();
+    const query = context.query.toLowerCase().trim();
     if (!query) return this.objects.slice(0, 20);
 
-    return this.objects
+    const matches = this.objects
       .filter(
         (o) =>
           o.displayKey.toLowerCase().includes(query) ||
           o.keyValue.toLowerCase().includes(query)
       )
       .slice(0, 20);
+
+    // If no exact match found, offer "Create new..."
+    const hasExact = matches.some(
+      (o) => o.displayKey.toLowerCase() === query || o.keyValue.toLowerCase() === query
+    );
+    if (!hasExact && query.length > 0) {
+      matches.push({
+        displayKey: context.query.trim(),
+        keyValue: context.query.trim(),
+        fileLabel: "Create new…",
+        filePath: "",
+        properties: {},
+        isCreateAction: true,
+      });
+    }
+
+    return matches;
   }
 
   renderSuggestion(suggestion: ObjectSuggestion, el: HTMLElement): void {
     const container = el.createDiv({ cls: "ol-suggestion" });
+
+    if (suggestion.isCreateAction) {
+      container.addClass("ol-suggestion-create");
+      const titleEl = container.createDiv({ cls: "ol-suggestion-title" });
+      titleEl.textContent = `Create "${suggestion.displayKey}"`;
+      const fileEl = container.createDiv({ cls: "ol-suggestion-file" });
+      fileEl.textContent = "New object…";
+      return;
+    }
 
     const titleEl = container.createDiv({ cls: "ol-suggestion-title" });
     titleEl.textContent = suggestion.displayKey;
@@ -114,6 +144,14 @@ export class ObjectLinkSuggest extends EditorSuggest<ObjectSuggestion> {
     _evt: MouseEvent | KeyboardEvent
   ): void {
     if (!this.context) return;
+
+    if (suggestion.isCreateAction) {
+      // Close the suggest popup and open creation modal
+      const query = suggestion.displayKey;
+      this.close();
+      if (this.onCreateNew) this.onCreateNew(query);
+      return;
+    }
 
     const editor = this.context.editor;
     const start = this.context.start;

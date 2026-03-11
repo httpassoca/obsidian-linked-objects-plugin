@@ -32,6 +32,9 @@ export class ObjectTableView extends TextFileView {
   private countEl: HTMLElement | null = null;
   private filterPanelEl: HTMLElement | null = null;
 
+  /** Callback to add a new object row — set by the plugin */
+  onAddRow: (() => void) | null = null;
+
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
     this.addAction("edit", "Edit as markdown", () => {
@@ -116,6 +119,15 @@ export class ObjectTableView extends TextFileView {
     });
     setIcon(addFilterBtn, "filter");
     addFilterBtn.addEventListener("click", () => this.addFilter());
+
+    const addRowBtn = toolbar.createEl("button", {
+      cls: "ol-table-add-row clickable-icon",
+      attr: { "aria-label": "Add object" },
+    });
+    setIcon(addRowBtn, "plus");
+    addRowBtn.addEventListener("click", () => {
+      if (this.onAddRow) this.onAddRow();
+    });
 
     this.countEl = toolbar.createDiv({ cls: "ol-table-count" });
 

@@ -18,6 +18,7 @@ import { buildGraph, GraphData, VaultFile } from "./graph-data";
 import { GraphView, VIEW_TYPE } from "./graph-view";
 import { ObjectTableView, TABLE_VIEW_TYPE } from "./table-view";
 import { ObjectLinkSuggest } from "./suggest";
+import { CreateObjectModal, getObjectTypes } from "./create-modal";
 import { objectLinkHighlighter, objectLinkWrapperKeymap } from "./editor-extension";
 import {
   ObjectLinksSettings,
@@ -32,6 +33,8 @@ export default class ObjectLinksPlugin extends Plugin {
   private allObjects: ParsedObject[] = [];
   /** Map: lowercase key value -> ParsedObject (for quick lookups) */
   private objectIndex: Map<string, ParsedObject> = new Map();
+  /** Cached parsed files from last scan (for object type enumeration) */
+  parsedFiles: ParsedFile[] = [];
 
   async onload(): Promise<void> {
     // ── Load settings ──
@@ -50,10 +53,25 @@ export default class ObjectLinksPlugin extends Plugin {
     });
 
     // ── Register table view ──
-    this.registerView(TABLE_VIEW_TYPE, (leaf) => new ObjectTableView(leaf));
+    this.registerView(TABLE_VIEW_TYPE, (leaf) => {
+      const view = new ObjectTableView(leaf);
+      view.onAddRow = () => {
+        if (!view.file) return;
+        const types = getObjectTypes(this.parsedFiles);
+        const selectedType = types.find((t) => t.filePath === view.file!.path);
+        new CreateObjectModal(this.app, types, {
+          selectedType,
+          onCreated: async () => {
+            await this.fullRefresh();
+          },
+        }).open();
+      };
+      return view;
+    });
 
     // ── Register suggest provider ──
     this.suggestProvider = new ObjectLinkSuggest(this.app);
+    this.suggestProvider.onCreateNew = (query) => this.openCreateModal(query);
     this.registerEditorSuggest(this.suggestProvider);
 
     // ── Register CM6 editor extensions: highlighting + selection wrapper ──
@@ -89,6 +107,12 @@ export default class ObjectLinksPlugin extends Plugin {
       name: "Open link under cursor",
       callback: () => this.openUnderCursor(),
       hotkeys: [{ modifiers: ["Mod"], key: "Enter" }],
+    });
+
+    this.addCommand({
+      id: "create-object",
+      name: "Create new object",
+      callback: () => this.openCreateModal(),
     });
 
     this.addCommand({
@@ -250,6 +274,7 @@ export default class ObjectLinksPlugin extends Plugin {
 
   private async fullRefresh(): Promise<void> {
     const parsedFiles = await this.scanMultiObjectFiles();
+    this.parsedFiles = parsedFiles;
     const allFiles = await this.getAllVaultFiles();
 
     // Build index + disambiguate duplicate key values
@@ -606,6 +631,46 @@ export default class ObjectLinksPlugin extends Plugin {
       this.popoverEl.remove();
       this.popoverEl = null;
     }
+  }
+
+  // ── Object creation ──────────────────────────────────────────────
+
+  /**
+   * Open the object-creation modal.
+   * @param prefillKey  Optional key to pre-fill (e.g. from suggest provider).
+   */
+  private openCreateModal(prefillKey?: string): void {
+    const types = getObjectTypes(this.parsedFiles);
+    if (types.length === 0) {
+      new Notice("No object-links files found. Create one first.");
+      return;
+    }
+
+    // If the current file is an object-links file, pre-select that type
+    const activeFile = this.app.workspace.getActiveFile();
+    let selectedType: ReturnType<typeof getObjectTypes>[number] | undefined;
+    if (activeFile) {
+      selectedType = types.find((t) => t.filePath === activeFile.path);
+    }
+
+    new CreateObjectModal(this.app, types, {
+      selectedType,
+      prefillKey: prefillKey ?? undefined,
+      onCreated: async (filePath) => {
+        await this.fullRefresh();
+        // Open the file so the user can see the result
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (file instanceof TFile) {
+          const content = await this.app.vault.read(file);
+          // Go to the last object (the one we just created)
+          const lastSepIdx = content.lastIndexOf("\n---\n");
+          const targetLine = lastSepIdx >= 0
+            ? content.substring(0, lastSepIdx).split("\n").length + 1
+            : content.split("\n").length - 1;
+          await this.goToObject(filePath, targetLine);
+        }
+      },
+    }).open();
   }
 
   // ── Navigation helpers ─────────────────────────────────────────────

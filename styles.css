@@ -399,6 +399,16 @@
   color: var(--text-faint);
 }
 
+/* "Create new…" suggestion */
+.ol-suggestion-create .ol-suggestion-title {
+  color: var(--text-accent);
+  font-style: italic;
+}
+.ol-suggestion-create .ol-suggestion-file {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    Live-preview editor highlighting for {{object links}}
    Matches the native [[wikilink]] appearance
