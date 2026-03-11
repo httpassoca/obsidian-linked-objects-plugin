@@ -65,6 +65,7 @@ class ForceSimulation {
 
   private linkStrengths: number[] = [];
   private degreeCount: Map<number, number> = new Map();
+  private nodeCharge: number[] = [];
 
   constructor(nodes: SimNode[], edges: SimEdge[], config: GraphConfig) {
     this.nodes = nodes;
@@ -82,10 +83,18 @@ class ForceSimulation {
       this.degreeCount.set(e.source, (this.degreeCount.get(e.source) || 0) + 1);
       this.degreeCount.set(e.target, (this.degreeCount.get(e.target) || 0) + 1);
     }
+
+    // Similar to d3-force defaults: links involving high-degree nodes should be a bit weaker.
     this.linkStrengths = this.edges.map((e) => {
       const ds = this.degreeCount.get(e.source) || 1;
       const dt = this.degreeCount.get(e.target) || 1;
-      return 1 / Math.min(ds, dt);
+      return 1 / Math.sqrt(Math.min(ds, dt));
+    });
+
+    // Per-node charge scaling: hubs repel a bit more so they don't become a clump.
+    this.nodeCharge = this.nodes.map((_, i) => {
+      const d = this.degreeCount.get(i) || 0;
+      return 1 + Math.min(2.2, Math.sqrt(d) * 0.35);
     });
   }
 
@@ -172,9 +181,13 @@ class ForceSimulation {
         let dy = nodes[j].y - nodes[i].y;
         let dist2 = dx * dx + dy * dy;
         if (dist2 > distMax2) continue;
-        if (dist2 < 4) dist2 = 4;
+        if (dist2 < 6) dist2 = 6;
         const dist = Math.sqrt(dist2);
-        const force = -chargeStr * alpha / dist2;
+
+        // Scale repulsion by per-node charge (degree-based)
+        const q = (this.nodeCharge[i] || 1) * (this.nodeCharge[j] || 1);
+        const force = -chargeStr * q * alpha / dist2;
+
         const fx = dx / dist * force;
         const fy = dy / dist * force;
         nodes[i].vx -= fx;
@@ -182,6 +195,13 @@ class ForceSimulation {
         nodes[j].vx += fx;
         nodes[j].vy += fy;
       }
+    }
+
+    // Mild Brownian motion to keep it "alive" like Obsidian's graph.
+    const noise = 0.025 * alpha;
+    for (const n of nodes) {
+      n.vx += (Math.random() - 0.5) * noise;
+      n.vy += (Math.random() - 0.5) * noise;
     }
 
     // Center force
@@ -621,10 +641,11 @@ export class GraphView extends ItemView {
   /* ── Node radius ───────────────────────────────────────────────── */
 
   private getNodeRadius(n: { type: string; connections: number }): number {
-    // Keep sizes fairly uniform; only a subtle bump for higher degree.
+    // Closer to Obsidian default: size relates to degree, but kept reasonable.
     const m = this.config.nodeSizeMultiplier;
-    const base = n.type === "file" ? 5 : 6;
-    const bump = Math.min(2.5, Math.sqrt(Math.max(0, n.connections)) * 0.6);
+    const base = n.type === "file" ? 4.5 : 5.5;
+    const deg = Math.max(0, n.connections);
+    const bump = Math.min(10, Math.sqrt(deg) * 1.6);
     return (base + bump) * m;
   }
 

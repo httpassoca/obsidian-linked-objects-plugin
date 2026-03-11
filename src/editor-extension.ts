@@ -84,6 +84,7 @@ export const objectLinkWrapperKeymap = keymap.of([
         const text = view.state.doc.sliceString(r.from, r.to);
         const insert = `{{${text}}}`;
         changes.push({ from: r.from, to: r.to, insert });
+
         // Place cursor inside the braces, selecting the original text.
         const start = r.from + 2;
         const end = start + text.length;
