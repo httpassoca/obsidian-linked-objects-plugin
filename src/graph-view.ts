@@ -1,7 +1,17 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
-import { GraphData, GraphNode, GraphEdge } from "./graph-data";
+import { GraphData } from "./graph-data";
 import { ConfigPanel, GraphConfig, DEFAULT_CONFIG } from "./settings";
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
+import {
+  forceSimulation,
+  forceLink,
+  forceManyBody,
+  forceCollide,
+  forceX,
+  forceY,
+  Simulation,
+  SimulationNodeDatum,
+  SimulationLinkDatum,
+} from "d3";
 
 export const VIEW_TYPE = "object-links-graph";
 
@@ -9,319 +19,34 @@ export const VIEW_TYPE = "object-links-graph";
    Simulation Node/Edge Types
    ═══════════════════════════════════════════════════════════════════ */
 
-interface SimNode {
+type NodeType = "object" | "file";
+
+type SimNode = SimulationNodeDatum & {
   id: string;
   label: string;
-  type: "object" | "file";
+  type: NodeType;
   filePath: string;
   fileLabel: string;
   properties: Record<string, string>;
   startLine: number;
   connections: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  fx: number | null;
-  fy: number | null;
   radius: number;
   /** Current visual alpha (interpolated for smooth transitions) */
   alpha: number;
   /** Target alpha based on highlight state */
   targetAlpha: number;
-}
+  /** d3 fixed position */
+  fx: number | null;
+  fy: number | null;
+};
 
-interface SimEdge {
-  source: number;
-  target: number;
+type SimEdge = SimulationLinkDatum<SimNode> & {
   edgeType: "object" | "wiki";
   /** Current visual alpha */
   alpha: number;
   /** Target alpha */
   targetAlpha: number;
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   Force Simulation — tuned to match Obsidian native graph
-   ═══════════════════════════════════════════════════════════════════ */
-
-class ForceSimulation {
-  nodes: SimNode[];
-  edges: SimEdge[];
-  alpha: number = 1.0;
-  alphaTarget: number = 0;
-  alphaDecay: number = 0.0228;
-  alphaMin: number = 0.001;
-  velocityDecay: number = 0.4;
-
-  linkDistance: number;
-  linkStrength: number = 0.4;
-  chargeStrength: number;
-  chargeDistMax: number;
-  centerStrength: number;
-  running = false;
-  private animFrameId: number = 0;
-  private onTick: (() => void) | null = null;
-
-  private linkStrengths: number[] = [];
-  private degreeCount: Map<number, number> = new Map();
-  private nodeCharge: number[] = [];
-
-  constructor(nodes: SimNode[], edges: SimEdge[], config: GraphConfig) {
-    this.nodes = nodes;
-    this.edges = edges;
-    this.linkDistance = config.linkDistance;
-    this.chargeStrength = config.repelStrength;
-    this.chargeDistMax = Math.max(config.repelStrength * 2, 600);
-    this.centerStrength = config.centerStrength;
-    this.computeDegreeStrengths();
-  }
-
-  private computeDegreeStrengths(): void {
-    this.degreeCount.clear();
-    for (const e of this.edges) {
-      this.degreeCount.set(e.source, (this.degreeCount.get(e.source) || 0) + 1);
-      this.degreeCount.set(e.target, (this.degreeCount.get(e.target) || 0) + 1);
-    }
-
-    // Similar to d3-force defaults: links involving high-degree nodes should be a bit weaker.
-    this.linkStrengths = this.edges.map((e) => {
-      const ds = this.degreeCount.get(e.source) || 1;
-      const dt = this.degreeCount.get(e.target) || 1;
-      return 1 / Math.sqrt(Math.min(ds, dt));
-    });
-
-    // Per-node charge scaling: hubs repel a bit more so they don't become a clump.
-    this.nodeCharge = this.nodes.map((_, i) => {
-      const d = this.degreeCount.get(i) || 0;
-      return 1 + Math.min(2.2, Math.sqrt(d) * 0.35);
-    });
-  }
-
-  updateParams(config: GraphConfig): void {
-    this.linkDistance = config.linkDistance;
-    this.chargeStrength = config.repelStrength;
-    this.chargeDistMax = Math.max(config.repelStrength * 2, 600);
-    this.centerStrength = config.centerStrength;
-    this.alpha = Math.max(this.alpha, 0.3);
-    if (!this.running) this.start();
-  }
-
-  setOnTick(fn: () => void) { this.onTick = fn; }
-
-  start() {
-    if (this.running) return;
-    this.running = true;
-    this.loop();
-  }
-
-  stop() {
-    this.running = false;
-    if (this.animFrameId) {
-      cancelAnimationFrame(this.animFrameId);
-      this.animFrameId = 0;
-    }
-  }
-
-  setAlphaTarget(t: number) {
-    this.alphaTarget = t;
-    if (t > 0) this.alpha = Math.max(this.alpha, t);
-    if (!this.running) this.start();
-  }
-
-  private loop = () => {
-    if (!this.running) return;
-
-    this.alpha += (this.alphaTarget - this.alpha) * this.alphaDecay;
-
-    if (this.alpha < this.alphaMin && this.alphaTarget === 0) {
-      this.running = false;
-      if (this.onTick) this.onTick();
-      return;
-    }
-
-    this.applyForces();
-    this.integratePositions();
-    if (this.onTick) this.onTick();
-
-    this.animFrameId = requestAnimationFrame(this.loop);
-  };
-
-  private applyForces() {
-    const nodes = this.nodes;
-    const edges = this.edges;
-    const alpha = this.alpha;
-
-    // Link force
-    for (let i = 0; i < edges.length; i++) {
-      const e = edges[i];
-      const s = nodes[e.source];
-      const t = nodes[e.target];
-      let dx = t.x - s.x + (Math.random() - 0.5) * 0.01;
-      let dy = t.y - s.y + (Math.random() - 0.5) * 0.01;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const str = this.linkStrengths[i] * this.linkStrength * alpha;
-      const force = (dist - this.linkDistance) / dist * str;
-      dx *= force;
-      dy *= force;
-      const bias = (this.degreeCount.get(e.source) || 1) /
-        ((this.degreeCount.get(e.source) || 1) + (this.degreeCount.get(e.target) || 1));
-      s.vx += dx * (1 - bias);
-      s.vy += dy * (1 - bias);
-      t.vx -= dx * bias;
-      t.vy -= dy * bias;
-    }
-
-    // Many-body (charge) force
-    const chargeStr = this.chargeStrength;
-    const distMax2 = this.chargeDistMax * this.chargeDistMax;
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        let dx = nodes[j].x - nodes[i].x;
-        let dy = nodes[j].y - nodes[i].y;
-        let dist2 = dx * dx + dy * dy;
-        if (dist2 > distMax2) continue;
-        if (dist2 < 6) dist2 = 6;
-        const dist = Math.sqrt(dist2);
-
-        // Scale repulsion by per-node charge (degree-based)
-        const q = (this.nodeCharge[i] || 1) * (this.nodeCharge[j] || 1);
-        const force = -chargeStr * q * alpha / dist2;
-
-        const fx = dx / dist * force;
-        const fy = dy / dist * force;
-        nodes[i].vx -= fx;
-        nodes[i].vy -= fy;
-        nodes[j].vx += fx;
-        nodes[j].vy += fy;
-      }
-    }
-
-    // Mild Brownian motion to keep it "alive" like Obsidian's graph.
-    const noise = 0.025 * alpha;
-    for (const n of nodes) {
-      n.vx += (Math.random() - 0.5) * noise;
-      n.vy += (Math.random() - 0.5) * noise;
-    }
-
-    // Center force
-    let cx = 0, cy = 0;
-    for (const n of nodes) { cx += n.x; cy += n.y; }
-    cx /= nodes.length || 1;
-    cy /= nodes.length || 1;
-    const cs = this.centerStrength * alpha;
-    for (const n of nodes) {
-      n.vx -= cx * cs;
-      n.vy -= cy * cs;
-    }
-
-    // Collision force (soft) — prevents overlap during the sim
-    // NOTE: we also do a *hard* positional solve after integration.
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i];
-        const b = nodes[j];
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        let dist = Math.sqrt(dx * dx + dy * dy);
-        if (!dist || dist < 1e-6) {
-          // Nudge apart deterministically when perfectly stacked
-          dx = (Math.random() - 0.5) * 0.01;
-          dy = (Math.random() - 0.5) * 0.01;
-          dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        }
-
-        // Extra padding so nodes never touch.
-        const minDist = a.radius + b.radius + 14;
-        if (dist < minDist) {
-          const strength = (minDist - dist) / dist * 1.25 * alpha;
-          const ox = dx * strength;
-          const oy = dy * strength;
-          a.vx -= ox;
-          a.vy -= oy;
-          b.vx += ox;
-          b.vy += oy;
-        }
-      }
-    }
-  }
-
-  private integratePositions() {
-    const decay = this.velocityDecay;
-    for (const n of this.nodes) {
-      if (n.fx !== null) {
-        n.x = n.fx;
-        n.vx = 0;
-      } else {
-        n.vx *= decay;
-        n.x += n.vx;
-      }
-      if (n.fy !== null) {
-        n.y = n.fy;
-        n.vy = 0;
-      } else {
-        n.vy *= decay;
-        n.y += n.vy;
-      }
-    }
-
-    // Hard collision solve: after integrating velocities, force nodes apart so
-    // overlap becomes impossible (they will not even touch).
-    this.resolveCollisions(3);
-  }
-
-  private resolveCollisions(iterations: number) {
-    const nodes = this.nodes;
-    const pad = 14; // should match/beat the soft collision padding
-    for (let it = 0; it < iterations; it++) {
-      let moved = false;
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i];
-          const b = nodes[j];
-
-          // If either node is fixed (dragging), only move the other.
-          const aFixed = a.fx !== null || a.fy !== null;
-          const bFixed = b.fx !== null || b.fy !== null;
-
-          let dx = b.x - a.x;
-          let dy = b.y - a.y;
-          let dist = Math.sqrt(dx * dx + dy * dy);
-          if (!dist || dist < 1e-6) {
-            dx = (Math.random() - 0.5) * 0.01;
-            dy = (Math.random() - 0.5) * 0.01;
-            dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          }
-
-          const minDist = a.radius + b.radius + pad;
-          const overlap = minDist - dist;
-          if (overlap > 0) {
-            const nx = dx / dist;
-            const ny = dy / dist;
-
-            // Push apart symmetrically unless one is fixed.
-            const push = overlap * 0.5;
-            if (!aFixed) {
-              a.x -= nx * push;
-              a.y -= ny * push;
-            }
-            if (!bFixed) {
-              b.x += nx * push;
-              b.y += ny * push;
-            }
-
-            // Dampen velocity so they don't immediately re-penetrate.
-            if (!aFixed) { a.vx *= 0.6; a.vy *= 0.6; }
-            if (!bFixed) { b.vx *= 0.6; b.vy *= 0.6; }
-
-            moved = true;
-          }
-        }
-      }
-      if (!moved) break;
-    }
-  }
-}
+};
 
 /* ═══════════════════════════════════════════════════════════════════
    Color Helpers
@@ -354,12 +79,6 @@ function getThemeColor(el: HTMLElement, varName: string, fallback: string): [num
   return parseColor(val || fallback);
 }
 
-/** Convert [r,g,b] floats (0-1) to a hex number like 0xRRGGBB */
-function colorToHex(c: [number, number, number]): number {
-  return (Math.round(c[0] * 255) << 16) | (Math.round(c[1] * 255) << 8) | Math.round(c[2] * 255);
-}
-
-/** Convert [r,g,b] floats to CSS string */
 function colorToCSS(c: [number, number, number]): string {
   return `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
 }
@@ -373,24 +92,21 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   GraphView — PixiJS WebGL Renderer
+   GraphView — Canvas + d3-force
    ═══════════════════════════════════════════════════════════════════ */
 
 export class GraphView extends ItemView {
   private graphData: GraphData | null = null;
-  private simulation: ForceSimulation | null = null;
+  private simulation: Simulation<SimNode, SimEdge> | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private configPanel: ConfigPanel | null = null;
   private config: GraphConfig = { ...DEFAULT_CONFIG };
 
-  // PixiJS state
-  private pixiApp: Application | null = null;
-  private worldContainer: Container | null = null;
-  private edgeGraphics: Graphics | null = null;
-  private nodeGraphics: Graphics | null = null;
-  private labelContainer: Container | null = null;
-  private labelTexts: Map<string, Text> = new Map();
-  private pixiCanvas: HTMLCanvasElement | null = null;
+  // Canvas state
+  private canvasWrapper: HTMLElement | null = null;
+  private canvasEl: HTMLCanvasElement | null = null;
+  private ctx: CanvasRenderingContext2D | null = null;
+  private dpr = 1;
 
   // Sim data
   private simNodes: SimNode[] = [];
@@ -441,9 +157,6 @@ export class GraphView extends ItemView {
   private _onMouseUp: ((e: MouseEvent) => void) | null = null;
   private _onDblClick: ((e: MouseEvent) => void) | null = null;
 
-  // Canvas wrapper
-  private canvasWrapper: HTMLElement | null = null;
-
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
   }
@@ -454,9 +167,7 @@ export class GraphView extends ItemView {
 
   setGraphData(data: GraphData): void {
     this.graphData = data;
-    if (this.containerEl) {
-      this.renderGraph();
-    }
+    if (this.containerEl) this.renderGraph();
   }
 
   async onOpen(): Promise<void> {
@@ -480,27 +191,26 @@ export class GraphView extends ItemView {
 
   private cleanup(): void {
     this.stopRenderLoop();
-    if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+    if (this.simulation) {
+      this.simulation.stop();
+      this.simulation.on("tick", null);
+      this.simulation = null;
+    }
     if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
     if (this.configPanel) { this.configPanel.destroy(); this.configPanel = null; }
     this.removeCanvasListeners();
 
-    // Destroy PixiJS
-    if (this.pixiApp) {
-      this.pixiApp.destroy(true, { children: true, texture: true });
-      this.pixiApp = null;
-    }
-    this.worldContainer = null;
-    this.edgeGraphics = null;
-    this.nodeGraphics = null;
-    this.labelContainer = null;
-    this.labelTexts.clear();
-    this.pixiCanvas = null;
+    this.simNodes = [];
+    this.simEdges = [];
+
+    this.canvasEl?.remove();
+    this.canvasEl = null;
+    this.ctx = null;
     this.canvasWrapper = null;
   }
 
   private removeCanvasListeners(): void {
-    const c = this.pixiCanvas;
+    const c = this.canvasEl;
     if (!c) return;
     if (this._onWheel) c.removeEventListener("wheel", this._onWheel);
     if (this._onMouseDown) c.removeEventListener("mousedown", this._onMouseDown);
@@ -565,7 +275,7 @@ export class GraphView extends ItemView {
       }
     }
 
-    const simActive = this.simulation?.running || false;
+    const simActive = (this.simulation?.alpha() ?? 0) > 0.001;
 
     if (animating || simActive || this.needsRedraw) {
       this.needsRedraw = false;
@@ -641,7 +351,6 @@ export class GraphView extends ItemView {
   /* ── Node radius ───────────────────────────────────────────────── */
 
   private getNodeRadius(n: { type: string; connections: number }): number {
-    // Closer to Obsidian default: size relates to degree, but kept reasonable.
     const m = this.config.nodeSizeMultiplier;
     const base = n.type === "file" ? 4.5 : 5.5;
     const deg = Math.max(0, n.connections);
@@ -665,11 +374,15 @@ export class GraphView extends ItemView {
 
   /* ── Coordinate transforms ─────────────────────────────────────── */
 
+  private getScreenSize(): { w: number; h: number } {
+    const c = this.canvasEl;
+    if (!c) return { w: 0, h: 0 };
+    // Use CSS pixels; drawing code uses CSS px coordinates.
+    return { w: c.clientWidth, h: c.clientHeight };
+  }
+
   private worldToScreen(wx: number, wy: number): [number, number] {
-    const app = this.pixiApp;
-    if (!app) return [0, 0];
-    const w = app.screen.width;
-    const h = app.screen.height;
+    const { w, h } = this.getScreenSize();
     return [
       (wx - this.camX) * this.camScale + w / 2,
       (wy - this.camY) * this.camScale + h / 2,
@@ -677,10 +390,7 @@ export class GraphView extends ItemView {
   }
 
   private screenToWorld(sx: number, sy: number): [number, number] {
-    const app = this.pixiApp;
-    if (!app) return [0, 0];
-    const w = app.screen.width;
-    const h = app.screen.height;
+    const { w, h } = this.getScreenSize();
     return [
       (sx - w / 2) / this.camScale + this.camX,
       (sy - h / 2) / this.camScale + this.camY,
@@ -688,10 +398,7 @@ export class GraphView extends ItemView {
   }
 
   private screenToWorldTarget(sx: number, sy: number): [number, number] {
-    const app = this.pixiApp;
-    if (!app) return [0, 0];
-    const w = app.screen.width;
-    const h = app.screen.height;
+    const { w, h } = this.getScreenSize();
     return [
       (sx - w / 2) / this.targetCamScale + this.targetCamX,
       (sy - h / 2) / this.targetCamScale + this.targetCamY,
@@ -705,8 +412,10 @@ export class GraphView extends ItemView {
     let best: SimNode | null = null;
     let bestDist = Infinity;
     for (const n of this.simNodes) {
-      const dx = n.x - wx;
-      const dy = n.y - wy;
+      const nx = n.x ?? 0;
+      const ny = n.y ?? 0;
+      const dx = nx - wx;
+      const dy = ny - wy;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const hitRadius = Math.max(n.radius + 4, 8 / this.camScale);
       if (dist < hitRadius && dist < bestDist) {
@@ -734,10 +443,10 @@ export class GraphView extends ItemView {
     const connected = new Set<string>();
     connected.add(focus.id);
     for (const e of this.simEdges) {
-      const sId = this.simNodes[e.source].id;
-      const tId = this.simNodes[e.target].id;
-      if (sId === focus.id) connected.add(tId);
-      if (tId === focus.id) connected.add(sId);
+      const s = (e.source as SimNode).id;
+      const t = (e.target as SimNode).id;
+      if (s === focus.id) connected.add(t);
+      if (t === focus.id) connected.add(s);
     }
 
     for (const n of this.simNodes) {
@@ -751,9 +460,9 @@ export class GraphView extends ItemView {
     }
 
     for (const e of this.simEdges) {
-      const sId = this.simNodes[e.source].id;
-      const tId = this.simNodes[e.target].id;
-      if (sId === focus.id || tId === focus.id) {
+      const s = (e.source as SimNode).id;
+      const t = (e.target as SimNode).id;
+      if (s === focus.id || t === focus.id) {
         e.targetAlpha = 0.8;
       } else {
         e.targetAlpha = 0.03;
@@ -769,7 +478,7 @@ export class GraphView extends ItemView {
     if (!this.graphData) return;
 
     const container = this.contentEl;
-    const isFirstRender = !this.pixiApp;
+    const isFirstRender = !this.canvasEl;
 
     if (isFirstRender) {
       container.empty();
@@ -786,71 +495,53 @@ export class GraphView extends ItemView {
       container.appendChild(this.canvasWrapper);
 
       this.refreshColors();
-
-      // Initialize PixiJS — async but we handle it
-      this.initPixi().then(() => {
-        this.rebuildSimData();
-      });
+      this.initCanvas();
+      this.rebuildSimData();
       return;
     }
 
-    // Already initialized — just rebuild sim data
     this.rebuildSimData();
   }
 
-  private async initPixi(): Promise<void> {
-    const container = this.contentEl;
+  private initCanvas(): void {
     const wrapper = this.canvasWrapper!;
-    const width = wrapper.clientWidth || container.clientWidth || 800;
-    const height = wrapper.clientHeight || container.clientHeight || 600;
 
-    const app = new Application();
-    await app.init({
-      width,
-      height,
-      antialias: true,
-      backgroundAlpha: 1,
-      backgroundColor: colorToHex(this.colorBg),
-      resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
-      preference: "webgl",
-    });
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
+    wrapper.appendChild(canvas);
 
-    // Get the canvas from the PixiJS app
-    this.pixiCanvas = app.canvas as HTMLCanvasElement;
-    this.pixiCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
-    wrapper.appendChild(this.pixiCanvas);
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new Error("Failed to init 2D canvas context");
 
-    this.pixiApp = app;
+    this.canvasEl = canvas;
+    this.ctx = ctx;
 
-    // Create world container (holds all graph elements)
-    this.worldContainer = new Container();
-    app.stage.addChild(this.worldContainer);
-
-    // Edge layer
-    this.edgeGraphics = new Graphics();
-    this.worldContainer.addChild(this.edgeGraphics);
-
-    // Node layer
-    this.nodeGraphics = new Graphics();
-    this.worldContainer.addChild(this.nodeGraphics);
-
-    // Label layer
-    this.labelContainer = new Container();
-    this.worldContainer.addChild(this.labelContainer);
-
-    // Resize handling
     this.resizeObserver = new ResizeObserver(() => {
-      this.resizePixi();
+      this.resizeCanvas();
       this.needsRedraw = true;
     });
-    this.resizeObserver.observe(container);
+    this.resizeObserver.observe(this.contentEl);
 
-    // Input handlers
+    this.resizeCanvas();
     this.setupInputHandlers();
-
-    // Start render loop
     this.startRenderLoop();
+  }
+
+  private resizeCanvas(): void {
+    const canvas = this.canvasEl;
+    const wrapper = this.canvasWrapper;
+    if (!canvas || !wrapper) return;
+
+    const w = wrapper.clientWidth || this.contentEl.clientWidth || 800;
+    const h = wrapper.clientHeight || this.contentEl.clientHeight || 600;
+
+    this.dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.floor(w * this.dpr));
+    canvas.height = Math.max(1, Math.floor(h * this.dpr));
+
+    // Make drawing commands in CSS pixels
+    const ctx = this.ctx!;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
   /** Rebuild simulation nodes/edges from current graphData + filters */
@@ -880,16 +571,16 @@ export class GraphView extends ItemView {
     // Preserve existing node positions where possible
     const oldPositions = new Map<string, { x: number; y: number }>();
     for (const n of this.simNodes) {
-      oldPositions.set(n.id, { x: n.x, y: n.y });
+      oldPositions.set(n.id, { x: n.x ?? 0, y: n.y ?? 0 });
     }
 
-    const nodeIdToIdx = new Map<string, number>();
-    this.simNodes = filtered.nodes.map((n, i) => {
-      nodeIdToIdx.set(n.id, i);
+    const nodeById = new Map<string, SimNode>();
+
+    this.simNodes = filtered.nodes.map((n) => {
       const old = oldPositions.get(n.id);
       const baseAlpha = n.type === "object" ? 0.9 : 0.5;
-      return {
-        ...n,
+      const node: SimNode = {
+        ...(n as any),
         x: old ? old.x : (Math.random() - 0.5) * width * 0.4,
         y: old ? old.y : (Math.random() - 0.5) * height * 0.4,
         vx: 0,
@@ -900,35 +591,81 @@ export class GraphView extends ItemView {
         alpha: baseAlpha,
         targetAlpha: baseAlpha,
       };
+      nodeById.set(node.id, node);
+      return node;
     });
 
     this.simEdges = filtered.edges
       .map((e) => {
-        const si = nodeIdToIdx.get(e.source);
-        const ti = nodeIdToIdx.get(e.target);
-        if (si === undefined || ti === undefined) return null;
+        const s = nodeById.get(e.source);
+        const t = nodeById.get(e.target);
+        if (!s || !t) return null;
         const baseAlpha = e.edgeType === "wiki" ? 0.35 : 0.25;
-        return {
-          source: si,
-          target: ti,
+        const edge: SimEdge = {
+          source: s,
+          target: t,
           edgeType: e.edgeType,
           alpha: baseAlpha,
           targetAlpha: baseAlpha,
-        } as SimEdge;
+        };
+        return edge;
       })
       .filter((e): e is SimEdge => e !== null);
-
-    // Stop old sim, start new one
-    if (this.simulation) this.simulation.stop();
-    this.simulation = new ForceSimulation(this.simNodes, this.simEdges, this.config);
-    this.simulation.setOnTick(() => { this.needsRedraw = true; });
-    this.simulation.start();
 
     this.hoveredNode = null;
     this.selectedNode = null;
     this.dragNode = null;
+
+    this.startSimulation();
     this.updateHighlightTargets();
     this.needsRedraw = true;
+  }
+
+  private startSimulation(): void {
+    // Stop old sim
+    if (this.simulation) {
+      this.simulation.stop();
+      this.simulation.on("tick", null);
+      this.simulation = null;
+    }
+
+    const sim = forceSimulation<SimNode, SimEdge>(this.simNodes)
+      .alpha(1)
+      .alphaTarget(0)
+      .alphaDecay(0.0228)
+      .alphaMin(0.001)
+      .velocityDecay(0.4);
+
+    const linkForce = forceLink<SimNode, SimEdge>(this.simEdges)
+      .distance(this.config.linkDistance)
+      .strength(0.4);
+
+    // Repel. Config is positive, d3 expects negative for repulsion.
+    const chargeForce = forceManyBody<SimNode>()
+      .strength(-this.config.repelStrength)
+      .distanceMax(Math.max(this.config.repelStrength * 2, 600));
+
+    // Centering: use forceX/Y with configurable strength.
+    const centerX = forceX<SimNode>(0).strength(this.config.centerStrength);
+    const centerY = forceY<SimNode>(0).strength(this.config.centerStrength);
+
+    // Collision: guarantee non-overlap + a little padding.
+    const collide = forceCollide<SimNode>((d) => d.radius + 14)
+      .strength(0.95)
+      .iterations(2);
+
+    sim
+      .force("link", linkForce)
+      .force("charge", chargeForce)
+      .force("centerX", centerX)
+      .force("centerY", centerY)
+      .force("collide", collide);
+
+    sim.on("tick", () => {
+      this.needsRedraw = true;
+    });
+
+    this.simulation = sim;
   }
 
   /** Handle config panel changes without rebuilding the entire view */
@@ -948,48 +685,65 @@ export class GraphView extends ItemView {
 
     if (filterChanged) {
       this.rebuildSimData();
-    } else {
-      if (this.simulation) {
-        this.simulation.updateParams(newConfig);
-      }
-      for (const n of this.simNodes) {
-        n.radius = this.getNodeRadius(n);
-      }
-      this.updateHighlightTargets();
-      this.needsRedraw = true;
+      return;
     }
-  }
 
-  /* ── PixiJS resize ─────────────────────────────────────────────── */
-
-  private resizePixi(): void {
-    if (!this.pixiApp || !this.canvasWrapper) return;
-    const w = this.canvasWrapper.clientWidth;
-    const h = this.canvasWrapper.clientHeight;
-    if (w > 0 && h > 0) {
-      this.pixiApp.renderer.resize(w, h);
+    // Update radii
+    for (const n of this.simNodes) {
+      n.radius = this.getNodeRadius(n);
     }
+
+    // Update forces
+    if (this.simulation) {
+      const link = this.simulation.force("link") as any;
+      link?.distance?.(newConfig.linkDistance);
+
+      const charge = this.simulation.force("charge") as any;
+      charge?.strength?.(-newConfig.repelStrength);
+      charge?.distanceMax?.(Math.max(newConfig.repelStrength * 2, 600));
+
+      const cx = this.simulation.force("centerX") as any;
+      cx?.strength?.(newConfig.centerStrength);
+      const cy = this.simulation.force("centerY") as any;
+      cy?.strength?.(newConfig.centerStrength);
+
+      const collide = this.simulation.force("collide") as any;
+      collide?.radius?.((d: SimNode) => d.radius + 14);
+
+      this.simulation.alpha(Math.max(this.simulation.alpha(), 0.3)).restart();
+    }
+
+    this.updateHighlightTargets();
+    this.needsRedraw = true;
   }
 
   /* ══════════════════════════════════════════════════════════════════
-     PixiJS Draw
+     Canvas Draw
      ══════════════════════════════════════════════════════════════════ */
 
+  private clear(): void {
+    const ctx = this.ctx;
+    const canvas = this.canvasEl;
+    if (!ctx || !canvas) return;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.fillStyle = colorToCSS(this.colorBg);
+    ctx.globalAlpha = 1;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
   private draw(): void {
-    if (!this.pixiApp || !this.worldContainer) return;
+    if (!this.ctx || !this.canvasEl) return;
 
-    // Update background color
-    this.pixiApp.renderer.background.color = colorToHex(this.colorBg);
+    // Theme might change during runtime
+    this.refreshColors();
 
-    if (this.simNodes.length === 0) {
-      if (this.edgeGraphics) this.edgeGraphics.clear();
-      if (this.nodeGraphics) this.nodeGraphics.clear();
-      if (this.labelContainer) {
-        this.labelContainer.removeChildren();
-        this.labelTexts.clear();
-      }
-      return;
-    }
+    this.clear();
+
+    if (this.simNodes.length === 0) return;
 
     this.drawEdges();
     this.drawNodes();
@@ -997,199 +751,171 @@ export class GraphView extends ItemView {
   }
 
   private drawEdges(): void {
-    const g = this.edgeGraphics;
-    if (!g) return;
-    g.clear();
+    const ctx = this.ctx!;
+    const canvas = this.canvasEl!;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const halfW = w / 2;
+    const halfH = h / 2;
 
     if (this.simEdges.length === 0) return;
 
-    const app = this.pixiApp!;
-    const halfW = app.screen.width / 2;
-    const halfH = app.screen.height / 2;
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.lineCap = "round";
 
     for (const e of this.simEdges) {
-      const s = this.simNodes[e.source];
-      const t = this.simNodes[e.target];
+      const s = e.source as SimNode;
+      const t = e.target as SimNode;
+
+      const sxw = s.x ?? 0;
+      const syw = s.y ?? 0;
+      const txw = t.x ?? 0;
+      const tyw = t.y ?? 0;
+
+      const sx = (sxw - this.camX) * this.camScale + halfW;
+      const sy = (syw - this.camY) * this.camScale + halfH;
+      const tx = (txw - this.camX) * this.camScale + halfW;
+      const ty = (tyw - this.camY) * this.camScale + halfH;
+
       const isWiki = e.edgeType === "wiki";
       const col = isWiki ? this.colorEdgeWiki : this.colorEdgeObj;
-      const alpha = e.alpha;
 
-      const sx = (s.x - this.camX) * this.camScale + halfW;
-      const sy = (s.y - this.camY) * this.camScale + halfH;
-      const tx = (t.x - this.camX) * this.camScale + halfW;
-      const ty = (t.y - this.camY) * this.camScale + halfH;
-
-      g.setStrokeStyle({ width: 1, color: colorToHex(col), alpha });
-      g.moveTo(sx, sy);
-      g.lineTo(tx, ty);
-      g.stroke();
+      ctx.strokeStyle = colorToCSS(col);
+      ctx.globalAlpha = e.alpha;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
     }
+
+    ctx.restore();
   }
 
   private drawNodes(): void {
-    const g = this.nodeGraphics;
-    if (!g) return;
-    g.clear();
-
-    if (this.simNodes.length === 0) return;
-
-    const app = this.pixiApp!;
-    const halfW = app.screen.width / 2;
-    const halfH = app.screen.height / 2;
+    const ctx = this.ctx!;
+    const canvas = this.canvasEl!;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const halfW = w / 2;
+    const halfH = h / 2;
     const focus = this.hoveredNode || this.selectedNode;
 
+    ctx.save();
+
     for (const n of this.simNodes) {
-      const isObj = n.type === "object";
-      let col: [number, number, number];
+      const nxw = n.x ?? 0;
+      const nyw = n.y ?? 0;
 
       // All nodes use the theme accent color, except orphans which are grey.
       const isOrphan = (n.connections || 0) === 0;
 
+      let col: [number, number, number];
       if (focus && n === focus) {
         col = isOrphan ? this.colorNodeFile : this.colorHighlight;
       } else {
         col = isOrphan ? this.colorNodeFile : this.colorNodeObject;
       }
 
-      const cx = (n.x - this.camX) * this.camScale + halfW;
-      const cy = (n.y - this.camY) * this.camScale + halfH;
+      const cx = (nxw - this.camX) * this.camScale + halfW;
+      const cy = (nyw - this.camY) * this.camScale + halfH;
 
       // Clamp node size on screen so zooming in doesn't create giant balls.
       const maxR = Math.max(2, this.config.nodeMaxScreenRadius);
       const r = Math.min(maxR, n.radius * this.camScale);
 
-      g.setFillStyle({ color: colorToHex(col), alpha: n.alpha });
-      g.circle(cx, cy, r);
-      g.fill();
+      ctx.fillStyle = colorToCSS(col);
+      ctx.globalAlpha = n.alpha;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
     }
+
+    ctx.restore();
   }
 
   private drawLabels(): void {
-    const lc = this.labelContainer;
-    if (!lc || !this.pixiApp) return;
+    const ctx = this.ctx!;
+    const canvas = this.canvasEl!;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const halfW = w / 2;
+    const halfH = h / 2;
 
-    const app = this.pixiApp;
-    const halfW = app.screen.width / 2;
-    const halfH = app.screen.height / 2;
     const labelOpacity = this.config.labelOpacity;
+    const zoomFactor = this.camScale;
 
     // Only show labels after a zoom threshold (configurable), and scale font smoothly.
     const baseFontSize = 11;
-    const zoomFactor = this.camScale;
     const fontSize = Math.max(8, Math.min(16, baseFontSize * Math.sqrt(zoomFactor)));
+    const minZoom = Math.max(0, this.config.labelMinZoom);
+    const zoomGate = zoomFactor >= minZoom;
 
-    // Track which node IDs are still present
-    const activeIds = new Set<string>();
+    if (!zoomGate) return;
 
-    // Greedy label placement in screen-space to reduce overlapping labels.
-    // We prioritize "more visible" nodes first (higher alpha, higher degree).
-    const orderedNodes = [...this.simNodes].sort((a, b) => {
-      if (b.alpha !== a.alpha) return b.alpha - a.alpha;
-      return (b.connections || 0) - (a.connections || 0);
-    });
+    ctx.save();
+    ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = this.colorText;
 
     const placedRects: Array<{ x: number; y: number; w: number; h: number }> = [];
     const intersects = (r1: any, r2: any) =>
       r1.x < r2.x + r2.w && r1.x + r1.w > r2.x && r1.y < r2.y + r2.h && r1.y + r1.h > r2.y;
 
-    for (const n of orderedNodes) {
-      activeIds.add(n.id);
+    // Greedy label placement to reduce overlapping labels.
+    const orderedNodes = [...this.simNodes].sort((a, b) => {
+      if (b.alpha !== a.alpha) return b.alpha - a.alpha;
+      return (b.connections || 0) - (a.connections || 0);
+    });
 
-      const sx = (n.x - this.camX) * this.camScale + halfW;
-      const sy = (n.y - this.camY) * this.camScale + halfH;
+    const maxW = Math.max(40, this.config.labelMaxWidth || 160);
+    const ellipsis = "…";
+
+    for (const n of orderedNodes) {
+      const nxw = n.x ?? 0;
+      const nyw = n.y ?? 0;
+      const sx = (nxw - this.camX) * this.camScale + halfW;
+      const sy = (nyw - this.camY) * this.camScale + halfH;
       const screenY = sy + n.radius * this.camScale + 6;
 
       // Cull off-screen labels
-      if (sx < -100 || sx > app.screen.width + 100 ||
-          sy < -100 || sy > app.screen.height + 100) {
-        const existing = this.labelTexts.get(n.id);
-        if (existing) existing.visible = false;
-        continue;
-      }
+      if (sx < -100 || sx > w + 100 || sy < -100 || sy > h + 100) continue;
 
-      // Zoom threshold: keep the graph clean until you zoom in.
-      const minZoom = Math.max(0, this.config.labelMinZoom);
-      const zoomGate = zoomFactor >= minZoom;
-
-      // Alpha based on highlight state
       let alpha: number;
-      if (!zoomGate) {
-        alpha = 0;
-      } else if (n.targetAlpha < 0.1) {
+      if (n.targetAlpha < 0.1) {
         alpha = Math.min(labelOpacity, n.alpha) * 0.3;
       } else {
-        alpha = labelOpacity * (n.alpha / n.targetAlpha);
+        alpha = labelOpacity * (n.alpha / Math.max(0.0001, n.targetAlpha));
         if (n === (this.hoveredNode || this.selectedNode)) alpha = 1.0;
       }
 
-      if (alpha < 0.01) {
-        const existing = this.labelTexts.get(n.id);
-        if (existing) existing.visible = false;
-        continue;
-      }
-
-      let text = this.labelTexts.get(n.id);
-      if (!text) {
-        text = new Text({
-          text: n.label,
-          style: new TextStyle({
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            fontSize,
-            fill: this.colorText,
-            align: "center",
-          }),
-        });
-        text.anchor.set(0.5, 0);
-        lc.addChild(text);
-        this.labelTexts.set(n.id, text);
-      }
-
-      // Update style first so measurement uses correct font size.
-      (text.style as TextStyle).fontSize = fontSize;
-      (text.style as TextStyle).fill = this.colorText;
+      if (alpha < 0.01) continue;
 
       // Truncate label to a max pixel width.
-      const maxW = Math.max(40, this.config.labelMaxWidth || 160);
-      const style = text.style as TextStyle;
       const full = n.label;
-      const ellipsis = "…";
-
-      // Measure via a shared canvas for speed + deterministic truncation.
-      const fontSizePx = (style.fontSize as number) || 11;
-      const fontFamily = (style.fontFamily as string) || "sans-serif";
-      const measure = (() => {
-        const canvas = (GraphView as any)._measureCanvas || document.createElement("canvas");
-        (GraphView as any)._measureCanvas = canvas;
-        const ctx = canvas.getContext("2d")!;
-        ctx.font = `${fontSizePx}px ${fontFamily}`;
-        return (s: string) => ctx.measureText(s).width;
-      })();
-
       let shown = full;
-      if (measure(full) > maxW) {
+      if (ctx.measureText(full).width > maxW) {
         let lo = 0, hi = full.length;
         while (lo < hi) {
           const mid = Math.ceil((lo + hi) / 2);
           const candidate = full.slice(0, mid) + ellipsis;
-          if (measure(candidate) <= maxW) lo = mid;
+          if (ctx.measureText(candidate).width <= maxW) lo = mid;
           else hi = mid - 1;
         }
         shown = full.slice(0, Math.max(0, lo)) + ellipsis;
       }
 
-      text.text = shown;
-      text.x = sx;
-      text.y = screenY;
-      text.alpha = alpha;
+      const metrics = ctx.measureText(shown);
+      const textW = metrics.width;
+      const textH = fontSize; // good enough for overlap culling
 
-      // Simple overlap culling.
-      // NOTE: Pixi's Text width/height are in screen pixels, which is exactly what we want.
       const pad = 3;
       const rect = {
-        x: sx - text.width / 2 - pad,
+        x: sx - textW / 2 - pad,
         y: screenY - pad,
-        w: text.width + pad * 2,
-        h: text.height + pad * 2,
+        w: textW + pad * 2,
+        h: textH + pad * 2,
       };
 
       let collides = false;
@@ -1197,25 +923,15 @@ export class GraphView extends ItemView {
         if (intersects(rect, r)) { collides = true; break; }
       }
 
-      // Always show the focused node's label.
       const isFocus = n === (this.hoveredNode || this.selectedNode);
-      if (!isFocus && collides) {
-        text.visible = false;
-        continue;
-      }
+      if (!isFocus && collides) continue;
 
-      text.visible = true;
+      ctx.globalAlpha = alpha;
+      ctx.fillText(shown, sx, screenY);
       placedRects.push(rect);
     }
 
-    // Remove labels for nodes that no longer exist
-    for (const [id, text] of this.labelTexts) {
-      if (!activeIds.has(id)) {
-        lc.removeChild(text);
-        text.destroy();
-        this.labelTexts.delete(id);
-      }
-    }
+    ctx.restore();
   }
 
   /* ══════════════════════════════════════════════════════════════════
@@ -1223,7 +939,7 @@ export class GraphView extends ItemView {
      ══════════════════════════════════════════════════════════════════ */
 
   private setupInputHandlers(): void {
-    const canvas = this.pixiCanvas!;
+    const canvas = this.canvasEl!;
     const container = this.contentEl;
 
     // Wheel (smooth zoom)
@@ -1238,9 +954,8 @@ export class GraphView extends ItemView {
       const factor = e.deltaY > 0 ? 0.92 : 1.0 / 0.92;
       this.targetCamScale = Math.max(0.03, Math.min(12, this.targetCamScale * factor));
 
-      const app = this.pixiApp!;
-      const w = app.screen.width;
-      const h = app.screen.height;
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
       this.targetCamX = wx - (mx - w / 2) / this.targetCamScale;
       this.targetCamY = wy - (my - h / 2) / this.targetCamScale;
     };
@@ -1257,9 +972,9 @@ export class GraphView extends ItemView {
       if (node) {
         this.dragNode = node;
         this.isDragging = false;
-        node.fx = node.x;
-        node.fy = node.y;
-        if (this.simulation) this.simulation.setAlphaTarget(0.3);
+        node.fx = node.x ?? 0;
+        node.fy = node.y ?? 0;
+        this.simulation?.alphaTarget(0.3).restart();
       } else {
         this.isPanning = true;
         this.panStartX = e.clientX;
@@ -1344,7 +1059,7 @@ export class GraphView extends ItemView {
 
         this.dragNode = null;
         this.isDragging = false;
-        if (this.simulation) this.simulation.setAlphaTarget(0);
+        this.simulation?.alphaTarget(0);
         return;
       }
 
