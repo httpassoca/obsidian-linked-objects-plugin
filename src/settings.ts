@@ -64,10 +64,14 @@ export interface GraphConfig {
   sourceFilter: string;
   // Display
   nodeSizeMultiplier: number;
+  nodeMaxScreenRadius: number;
+  labelOpacity: number;
+  labelMinZoom: number;
+  labelMaxWidth: number;
+  // Forces
   linkDistance: number;
   centerStrength: number;
   repelStrength: number;
-  labelOpacity: number;
 }
 
 export const DEFAULT_CONFIG: GraphConfig = {
@@ -79,11 +83,16 @@ export const DEFAULT_CONFIG: GraphConfig = {
   showObjectEdges: true,
   pathFilter: "",
   sourceFilter: "",
+  // Display
   nodeSizeMultiplier: 1,
+  nodeMaxScreenRadius: 16,
+  labelOpacity: 0.65,
+  labelMinZoom: 1.05,
+  labelMaxWidth: 160,
+  // Forces
   linkDistance: 100,
   centerStrength: 0.03,
   repelStrength: 300,
-  labelOpacity: 0.65,
 };
 
 export type ConfigChangeCallback = (config: GraphConfig) => void;
@@ -180,6 +189,27 @@ export class ConfigPanel {
         this.emit();
       });
 
+      this.renderSlider(contentEl, "Node max size (on screen)", this.config.nodeMaxScreenRadius, 6, 40, 1, (v) => {
+        this.config.nodeMaxScreenRadius = v;
+        this.emit();
+      });
+
+      this.renderSlider(contentEl, "Labels appear at zoom", this.config.labelMinZoom, 0.2, 3, 0.05, (v) => {
+        this.config.labelMinZoom = v;
+        this.emit();
+      });
+
+      this.renderSlider(contentEl, "Label max width", this.config.labelMaxWidth, 60, 360, 10, (v) => {
+        this.config.labelMaxWidth = v;
+        this.emit();
+      });
+
+      this.renderSlider(contentEl, "Label opacity", this.config.labelOpacity, 0, 1, 0.05, (v) => {
+        this.config.labelOpacity = v;
+        this.emit();
+      });
+
+      // Forces
       this.renderSlider(contentEl, "Link distance", this.config.linkDistance, 30, 500, 10, (v) => {
         this.config.linkDistance = v;
         this.emit();
@@ -192,11 +222,6 @@ export class ConfigPanel {
 
       this.renderSlider(contentEl, "Repel force", this.config.repelStrength, 50, 1000, 25, (v) => {
         this.config.repelStrength = v;
-        this.emit();
-      });
-
-      this.renderSlider(contentEl, "Label opacity", this.config.labelOpacity, 0, 1, 0.05, (v) => {
-        this.config.labelOpacity = v;
         this.emit();
       });
     });

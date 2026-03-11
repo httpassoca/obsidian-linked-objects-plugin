@@ -558,9 +558,11 @@ export class GraphView extends ItemView {
   /* ── Node radius ───────────────────────────────────────────────── */
 
   private getNodeRadius(n: { type: string; connections: number }): number {
+    // Keep sizes fairly uniform; only a subtle bump for higher degree.
     const m = this.config.nodeSizeMultiplier;
-    const base = n.type === "file" ? 4 : 5;
-    return Math.max(base, Math.min(18, base + Math.sqrt(n.connections) * 2.5)) * m;
+    const base = n.type === "file" ? 5 : 6;
+    const bump = Math.min(2.5, Math.sqrt(Math.max(0, n.connections)) * 0.6);
+    return (base + bump) * m;
   }
 
   /* ── Theme colors ──────────────────────────────────────────────── */
@@ -956,15 +958,21 @@ export class GraphView extends ItemView {
       const isObj = n.type === "object";
       let col: [number, number, number];
 
+      // All nodes use the theme accent color, except orphans which are grey.
+      const isOrphan = (n.connections || 0) === 0;
+
       if (focus && n === focus) {
-        col = isObj ? this.colorHighlight : parseColor(this.colorText);
+        col = isOrphan ? this.colorNodeFile : this.colorHighlight;
       } else {
-        col = isObj ? this.colorNodeObject : this.colorNodeFile;
+        col = isOrphan ? this.colorNodeFile : this.colorNodeObject;
       }
 
       const cx = (n.x - this.camX) * this.camScale + halfW;
       const cy = (n.y - this.camY) * this.camScale + halfH;
-      const r = n.radius * this.camScale;
+
+      // Clamp node size on screen so zooming in doesn't create giant balls.
+      const maxR = Math.max(2, this.config.nodeMaxScreenRadius);
+      const r = Math.min(maxR, n.radius * this.camScale);
 
       g.setFillStyle({ color: colorToHex(col), alpha: n.alpha });
       g.circle(cx, cy, r);
@@ -981,8 +989,10 @@ export class GraphView extends ItemView {
     const halfH = app.screen.height / 2;
     const labelOpacity = this.config.labelOpacity;
 
+    // Only show labels after a zoom threshold (configurable), and scale font smoothly.
     const baseFontSize = 11;
-    const fontSize = Math.max(8, Math.min(16, baseFontSize * Math.sqrt(this.camScale)));
+    const zoomFactor = this.camScale;
+    const fontSize = Math.max(8, Math.min(16, baseFontSize * Math.sqrt(zoomFactor)));
 
     // Track which node IDs are still present
     const activeIds = new Set<string>();
@@ -1013,9 +1023,15 @@ export class GraphView extends ItemView {
         continue;
       }
 
+      // Zoom threshold: keep the graph clean until you zoom in.
+      const minZoom = Math.max(0, this.config.labelMinZoom);
+      const zoomGate = zoomFactor >= minZoom;
+
       // Alpha based on highlight state
       let alpha: number;
-      if (n.targetAlpha < 0.1) {
+      if (!zoomGate) {
+        alpha = 0;
+      } else if (n.targetAlpha < 0.1) {
         alpha = Math.min(labelOpacity, n.alpha) * 0.3;
       } else {
         alpha = labelOpacity * (n.alpha / n.targetAlpha);
@@ -1044,10 +1060,40 @@ export class GraphView extends ItemView {
         this.labelTexts.set(n.id, text);
       }
 
-      // Update text properties (must happen before measuring width/height)
-      text.text = n.label;
+      // Update style first so measurement uses correct font size.
       (text.style as TextStyle).fontSize = fontSize;
       (text.style as TextStyle).fill = this.colorText;
+
+      // Truncate label to a max pixel width.
+      const maxW = Math.max(40, this.config.labelMaxWidth || 160);
+      const style = text.style as TextStyle;
+      const full = n.label;
+      const ellipsis = "…";
+
+      // Measure via a shared canvas for speed + deterministic truncation.
+      const fontSizePx = (style.fontSize as number) || 11;
+      const fontFamily = (style.fontFamily as string) || "sans-serif";
+      const measure = (() => {
+        const canvas = (GraphView as any)._measureCanvas || document.createElement("canvas");
+        (GraphView as any)._measureCanvas = canvas;
+        const ctx = canvas.getContext("2d")!;
+        ctx.font = `${fontSizePx}px ${fontFamily}`;
+        return (s: string) => ctx.measureText(s).width;
+      })();
+
+      let shown = full;
+      if (measure(full) > maxW) {
+        let lo = 0, hi = full.length;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          const candidate = full.slice(0, mid) + ellipsis;
+          if (measure(candidate) <= maxW) lo = mid;
+          else hi = mid - 1;
+        }
+        shown = full.slice(0, Math.max(0, lo)) + ellipsis;
+      }
+
+      text.text = shown;
       text.x = sx;
       text.y = screenY;
       text.alpha = alpha;
