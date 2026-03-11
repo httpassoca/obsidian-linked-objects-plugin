@@ -5,6 +5,11 @@
 
 /* ── Graph container ──────────────────────────────────────────────── */
 
+/* Prevent the Obsidian view wrapper from ever showing scrollbars */
+.workspace-leaf-content:has(.ol-graph-container) {
+  overflow: hidden !important;
+}
+
 .ol-graph-container {
   position: relative;
   width: 100%;
@@ -16,7 +21,7 @@
 /* ── Tooltip ──────────────────────────────────────────────────────── */
 
 .ol-tooltip {
-  position: absolute;
+  position: fixed;
   display: none;
   pointer-events: none;
   background: var(--background-secondary);
@@ -28,6 +33,9 @@
   border-radius: 4px;
   z-index: 200;
   white-space: nowrap;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
@@ -41,6 +49,7 @@
   left: 10px;
   width: 240px;
   max-height: calc(100% - 20px);
+  overflow-x: hidden;
   overflow-y: auto;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
@@ -166,31 +175,14 @@
 .ol-config-toggle.is-enabled .ol-config-toggle-knob {
   left: 16px;
 }
-
-/* Slider */
-.ol-config-slider-row {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+/* Compact overrides for native setting-item sliders inside config panel */
+.ol-config-section-content .setting-item.mod-slider {
+  padding: 4px 0;
+  border: none;
 }
 
-.ol-config-slider {
-  width: 100%;
-  -webkit-appearance: none;
-  appearance: none;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--background-modifier-border);
-  outline: none;
-}
-.ol-config-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--interactive-accent);
-  cursor: pointer;
+.ol-config-section-content .setting-item.mod-slider .setting-item-name {
+  font-size: 12px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -446,4 +438,230 @@
   padding: 40px;
   white-space: pre-line;
   line-height: 1.6;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Table View for object-links files
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ol-table-view {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-interface, var(--default-font));
+}
+
+.ol-table-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────── */
+
+.ol-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.ol-table-add-filter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+}
+.ol-table-add-filter:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ol-table-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+/* ── Filter panel (Notion-style) ──────────────────────────────────── */
+
+.ol-filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.ol-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ol-filter-select {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-normal);
+  font-size: 12px;
+  padding: 3px 6px;
+  outline: none;
+  font-family: var(--font-interface, var(--default-font));
+}
+.ol-filter-select:focus {
+  border-color: var(--interactive-accent);
+}
+
+.ol-filter-input {
+  flex: 1;
+  min-width: 80px;
+  max-width: 200px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-normal);
+  font-size: 12px;
+  padding: 3px 6px;
+  outline: none;
+  font-family: var(--font-interface, var(--default-font));
+}
+.ol-filter-input:focus {
+  border-color: var(--interactive-accent);
+}
+.ol-filter-input::placeholder {
+  color: var(--text-faint);
+}
+
+.ol-filter-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+}
+.ol-filter-remove:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+/* ── Table wrapper ────────────────────────────────────────────────── */
+
+.ol-table-wrapper {
+  flex: 1;
+  overflow: auto;
+}
+
+.ol-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+}
+
+/* ── Header ───────────────────────────────────────────────────────── */
+
+.ol-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.ol-table th {
+  position: relative;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 0;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 2px solid var(--background-modifier-border);
+  transition: color 0.1s ease;
+}
+
+.ol-th-inner {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.ol-table th:hover {
+  color: var(--text-normal);
+}
+.ol-table th.ol-th-sorted {
+  color: var(--interactive-accent);
+}
+
+.ol-th-arrow {
+  font-size: 10px;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.ol-th-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Resize handle */
+.ol-th-resize {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.ol-th-resize:hover,
+.ol-th-resize:active {
+  background: var(--interactive-accent);
+  opacity: 0.5;
+}
+
+/* ── Rows ─────────────────────────────────────────────────────────── */
+
+.ol-table td {
+  padding: 0 12px;
+  height: 32px;
+  color: var(--text-normal);
+  border-bottom: 1px solid var(--background-modifier-border);
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.ol-td-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ol-table tbody tr:hover td {
+  background: var(--background-secondary-alt, var(--background-secondary));
 }

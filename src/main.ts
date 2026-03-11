@@ -3,8 +3,10 @@ import {
   MarkdownView,
   Notice,
   Plugin,
+  TextFileView,
   TFile,
   WorkspaceLeaf,
+  setIcon,
 } from "obsidian";
 import {
   parseMultiObjectFile,
@@ -14,6 +16,7 @@ import {
 } from "./parser";
 import { buildGraph, GraphData, VaultFile } from "./graph-data";
 import { GraphView, VIEW_TYPE } from "./graph-view";
+import { ObjectTableView, TABLE_VIEW_TYPE } from "./table-view";
 import { ObjectLinkSuggest } from "./suggest";
 import { objectLinkHighlighter, objectLinkWrapperKeymap } from "./editor-extension";
 import {
@@ -45,6 +48,9 @@ export default class ObjectLinksPlugin extends Plugin {
       view.navigateToFile = (filePath) => this.goToFile(filePath);
       return view;
     });
+
+    // ── Register table view ──
+    this.registerView(TABLE_VIEW_TYPE, (leaf) => new ObjectTableView(leaf));
 
     // ── Register suggest provider ──
     this.suggestProvider = new ObjectLinkSuggest(this.app);
@@ -85,6 +91,75 @@ export default class ObjectLinksPlugin extends Plugin {
       hotkeys: [{ modifiers: ["Mod"], key: "Enter" }],
     });
 
+    this.addCommand({
+      id: "open-as-table",
+      name: "Open current file as table",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== "md") return false;
+        const leaf = this.app.workspace.activeLeaf;
+        if (!leaf) return false;
+        if (leaf.view.getViewType() === TABLE_VIEW_TYPE) return false;
+        if (checking) return true;
+        leaf.setViewState({
+          type: TABLE_VIEW_TYPE,
+          state: { file: file.path },
+        });
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "open-as-markdown",
+      name: "Switch back to editor",
+      checkCallback: (checking) => {
+        const leaf = this.app.workspace.activeLeaf;
+        if (!leaf || leaf.view.getViewType() !== TABLE_VIEW_TYPE) return false;
+        if (checking) return true;
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return false;
+        leaf.setViewState({
+          type: "markdown",
+          state: { file: file.path },
+        });
+        return true;
+      },
+    });
+
+    // ── Auto-open object files in table view ──
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (!file || !(file instanceof TFile) || file.extension !== "md") return;
+        if (!this.settings.openObjectFilesInTableView) return;
+
+        const leaf = this.app.workspace.getActiveViewOfType(TextFileView as any)?.leaf
+          ?? this.app.workspace.activeLeaf;
+        if (!leaf) return;
+
+        // Don't switch if already in table view
+        if (leaf.view.getViewType() === TABLE_VIEW_TYPE) return;
+
+        // Check if this is an object-links file (async)
+        this.app.vault.read(file).then((content) => {
+          const tag = this.settings.objectFileTag.trim();
+          if (tag && !this.hasFileTag(content, tag)) return;
+          if (!parseMultiObjectFile(content, file.path)) return;
+
+          leaf.setViewState({
+            type: TABLE_VIEW_TYPE,
+            state: { file: file.path },
+          });
+        });
+      })
+    );
+
+    // ── Inject table-view button into markdown leaves for object-links files ──
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        this.injectTableViewButtons();
+      })
+    );
+
     // ── Initial scan on layout ready ──
     this.app.workspace.onLayoutReady(() => {
       this.fullRefresh();
@@ -116,6 +191,50 @@ export default class ObjectLinksPlugin extends Plugin {
 
   onunload(): void {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(TABLE_VIEW_TYPE);
+    // Remove injected buttons
+    document.querySelectorAll(".ol-table-view-btn").forEach((el) => el.remove());
+  }
+
+  // ── Inject table-view button ─────────────────────────────────────
+
+  /** Set of leaf IDs where the file is known to be an object-links file */
+  private knownObjectLeaves = new Set<string>();
+
+  private injectTableViewButtons(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const actions = (leaf.view as any).containerEl?.querySelector(".view-actions") as HTMLElement | null;
+      if (!actions || actions.querySelector(".ol-table-view-btn")) continue;
+
+      const file = (leaf.view as any).file as TFile | undefined;
+      if (!file || file.extension !== "md") continue;
+
+      // Check if this file is a known object-links file
+      const leafId = (leaf as any).id ?? file.path;
+      if (!this.knownObjectLeaves.has(leafId)) {
+        // Async check, inject on next layout-change if it's an object file
+        this.app.vault.read(file).then((content) => {
+          const tag = this.settings.objectFileTag.trim();
+          if (tag && !this.hasFileTag(content, tag)) return;
+          if (!parseMultiObjectFile(content, file.path)) return;
+          this.knownObjectLeaves.add(leafId);
+          this.injectTableViewButtons();
+        });
+        continue;
+      }
+
+      const btn = document.createElement("button");
+      btn.className = "clickable-icon view-action ol-table-view-btn";
+      btn.setAttribute("aria-label", "Open as table");
+      setIcon(btn, "table");
+      btn.addEventListener("click", () => {
+        leaf.setViewState({
+          type: TABLE_VIEW_TYPE,
+          state: { file: file.path },
+        });
+      });
+      actions.insertBefore(btn, actions.firstChild);
+    }
   }
 
   // ── Debounce ────────────────────────────────────────────────────────

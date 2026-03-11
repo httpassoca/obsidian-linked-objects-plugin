@@ -213,6 +213,10 @@ export class GraphView extends ItemView {
       this._onContainerMouseDown = null;
     }
 
+    // Remove fixed tooltip from body
+    const tooltip = document.body.querySelector(".ol-tooltip");
+    if (tooltip) tooltip.remove();
+
     this.simNodes = [];
     this.simEdges = [];
 
@@ -615,12 +619,13 @@ export class GraphView extends ItemView {
       if ((n.connections || 0) === 0) baseOrphans.add(n.id);
     }
 
-    // Option: connect orphans to their folder (so they cluster by location).
+    // Option: connect orphans to their parent.
+    // Object-type orphans link to their source file; file-type orphans link to their folder.
     // Implemented here (view-level) to avoid changing the base graph model.
     const nodesPlus = [...filtered.nodes] as any[];
     const edgesPlus = [...filtered.edges] as any[];
 
-    if (this.config.connectOrphansToFolders) {
+    if (this.config.linkToParent || this.config.connectOrphansToFolders) {
       const folderNodeId = (folder: string) => `folder::${folder}`;
       const folderLabel = (folder: string) => {
         const cleaned = folder.replace(/\/+$/, "");
@@ -635,29 +640,53 @@ export class GraphView extends ItemView {
       for (const n of filtered.nodes) {
         if (!baseOrphans.has(n.id)) continue;
 
-        const path = n.filePath || "";
-        const idx = path.lastIndexOf("/");
-        const folder = idx > 0 ? path.slice(0, idx) : "/";
-        const fid = folderNodeId(folder);
+        let parentId: string;
 
-        if (!existing.has(fid)) {
-          existing.add(fid);
-          nodesPlus.push({
-            id: fid,
-            label: folderLabel(folder),
-            type: "file",
-            filePath: folder + "/",
-            fileLabel: folderLabel(folder),
-            properties: {},
-            startLine: 0,
-            connections: 0,
-          });
+        if (this.config.linkToParent && n.type === "object") {
+          // Object orphan → link to its source file
+          const sourceFileId = `file::${n.filePath}`;
+          parentId = sourceFileId;
+
+          if (!existing.has(parentId)) {
+            existing.add(parentId);
+            const basename = n.filePath.split("/").pop()?.replace(/\.md$/i, "") || n.filePath;
+            nodesPlus.push({
+              id: parentId,
+              label: basename,
+              type: "file",
+              filePath: n.filePath,
+              fileLabel: basename,
+              properties: {},
+              startLine: 0,
+              connections: 0,
+            });
+          }
+        } else {
+          // File orphan → link to its folder
+          const path = n.filePath || "";
+          const idx = path.lastIndexOf("/");
+          const folder = idx > 0 ? path.slice(0, idx) : "/";
+          parentId = folderNodeId(folder);
+
+          if (!existing.has(parentId)) {
+            existing.add(parentId);
+            nodesPlus.push({
+              id: parentId,
+              label: folderLabel(folder),
+              type: "file",
+              filePath: folder + "/",
+              fileLabel: folderLabel(folder),
+              properties: {},
+              startLine: 0,
+              connections: 0,
+            });
+          }
         }
 
-        const edgeId = [n.id, fid].sort().join("--");
+        const edgeId = [n.id, parentId].sort().join("--");
         if (!edgeSet.has(edgeId)) {
           edgeSet.add(edgeId);
-          edgesPlus.push({ source: n.id, target: fid, edgeType: "wiki" });
+          edgesPlus.push({ source: n.id, target: parentId, edgeType: "wiki" });
         }
       }
     }
@@ -769,6 +798,7 @@ export class GraphView extends ItemView {
       old.showObjectEdges !== newConfig.showObjectEdges ||
       old.showOrphans !== newConfig.showOrphans ||
       old.connectOrphansToFolders !== newConfig.connectOrphansToFolders ||
+      old.linkToParent !== newConfig.linkToParent ||
       old.search !== newConfig.search ||
       old.pathFilter !== newConfig.pathFilter ||
       old.sourceFilter !== newConfig.sourceFilter;
@@ -1217,26 +1247,42 @@ export class GraphView extends ItemView {
   /* ── Tooltip ───────────────────────────────────────────────────── */
 
   private showTooltip(node: SimNode, container: HTMLElement): void {
-    let tooltip = container.querySelector(".ol-tooltip") as HTMLElement;
+    let tooltip = document.body.querySelector(".ol-tooltip") as HTMLElement;
     if (!tooltip) {
       tooltip = document.createElement("div");
       tooltip.className = "ol-tooltip";
-      container.appendChild(tooltip);
+      document.body.appendChild(tooltip);
     }
     tooltip.textContent = node.label;
     tooltip.style.display = "block";
   }
 
   private moveTooltip(e: MouseEvent, container: HTMLElement): void {
-    const tooltip = container.querySelector(".ol-tooltip") as HTMLElement;
+    const tooltip = document.body.querySelector(".ol-tooltip") as HTMLElement;
     if (!tooltip) return;
-    const rect = container.getBoundingClientRect();
-    tooltip.style.left = e.clientX - rect.left + 14 + "px";
-    tooltip.style.top = e.clientY - rect.top - 10 + "px";
+
+    const tw = tooltip.offsetWidth;
+    const th = tooltip.offsetHeight;
+    const pad = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = e.clientX + 14;
+    let top = e.clientY - 10;
+
+    // Flip left if overflowing right
+    if (left + tw + pad > vw) {
+      left = e.clientX - tw - 14;
+    }
+    left = Math.max(pad, Math.min(left, vw - tw - pad));
+    top = Math.max(pad, Math.min(top, vh - th - pad));
+
+    tooltip.style.left = left + "px";
+    tooltip.style.top = top + "px";
   }
 
   private hideTooltip(container: HTMLElement): void {
-    const tooltip = container.querySelector(".ol-tooltip") as HTMLElement;
+    const tooltip = document.body.querySelector(".ol-tooltip") as HTMLElement;
     if (tooltip) tooltip.style.display = "none";
   }
 

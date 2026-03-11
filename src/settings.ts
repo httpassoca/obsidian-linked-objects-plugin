@@ -6,10 +6,12 @@ import type ObjectLinksPlugin from "./main";
  */
 export interface ObjectLinksSettings {
   objectFileTag: string;
+  openObjectFilesInTableView: boolean;
 }
 
 export const DEFAULT_SETTINGS: ObjectLinksSettings = {
   objectFileTag: "object-links",
+  openObjectFilesInTableView: false,
 };
 
 /**
@@ -46,6 +48,21 @@ export class ObjectLinksSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+
+    new Setting(containerEl)
+      .setName("Open object files in table view")
+      .setDesc(
+        "When enabled, files tagged as object files will open in a table view by default. " +
+        "You can always switch back to the normal editor via the view menu."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.openObjectFilesInTableView)
+          .onChange(async (value) => {
+            this.plugin.settings.openObjectFilesInTableView = value;
+            await this.plugin.saveSettings();
+          })
+      );
   }
 }
 
@@ -63,6 +80,7 @@ export interface GraphConfig {
   pathFilter: string;
   sourceFilter: string;
   connectOrphansToFolders: boolean;
+  linkToParent: boolean;
   // Display
   nodeSizeMultiplier: number;
   nodeMaxScreenRadius: number;
@@ -85,6 +103,7 @@ export const DEFAULT_CONFIG: GraphConfig = {
   pathFilter: "",
   sourceFilter: "",
   connectOrphansToFolders: false,
+  linkToParent: false,
   // Display
   nodeSizeMultiplier: 1,
   nodeMaxScreenRadius: 16,
@@ -173,8 +192,8 @@ export class ConfigPanel {
         this.emit();
       });
 
-      this.renderToggle(contentEl, "Connect orphans to folders", this.config.connectOrphansToFolders, (v) => {
-        this.config.connectOrphansToFolders = v;
+      this.renderToggle(contentEl, "Link to parent", this.config.linkToParent, (v) => {
+        this.config.linkToParent = v;
         this.emit();
       });
 
@@ -336,17 +355,30 @@ export class ConfigPanel {
     step: number,
     onChange: (v: number) => void
   ): void {
-    const row = document.createElement("div");
-    row.className = "ol-config-row ol-config-slider-row";
+    const settingItem = document.createElement("div");
+    settingItem.className = "setting-item mod-slider";
 
-    const labelEl = document.createElement("span");
-    labelEl.className = "ol-config-label";
-    labelEl.textContent = label;
-    row.appendChild(labelEl);
+    const info = document.createElement("div");
+    info.className = "setting-item-info";
+
+    const name = document.createElement("div");
+    name.className = "setting-item-name";
+    name.textContent = label;
+    info.appendChild(name);
+
+    const desc = document.createElement("div");
+    desc.className = "setting-item-description";
+    info.appendChild(desc);
+
+    settingItem.appendChild(info);
+
+    const control = document.createElement("div");
+    control.className = "setting-item-control";
 
     const slider = document.createElement("input");
+    slider.className = "slider";
     slider.type = "range";
-    slider.className = "ol-config-slider";
+    slider.dataset.ignoreSwipe = "true";
     slider.min = String(min);
     slider.max = String(max);
     slider.step = String(step);
@@ -355,8 +387,9 @@ export class ConfigPanel {
       onChange(parseFloat(slider.value));
     });
 
-    row.appendChild(slider);
-    parent.appendChild(row);
+    control.appendChild(slider);
+    settingItem.appendChild(control);
+    parent.appendChild(settingItem);
   }
 
   private emit(): void {
